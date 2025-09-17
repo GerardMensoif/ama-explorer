@@ -53,6 +53,40 @@ const Utils = {
         return `Slot ${slot}`;
     },
 
+    // Convertir un slot en timestamp approximatif
+    slotToTimestamp(slot) {
+        if (!slot) return null;
+
+        // Calibration basée sur une transaction connue:
+        // Slot 29806536 = Sep 17, 2025 20:41:58 (selon wallet team)
+        const referenceSlot = 29806536;
+        const referenceTimestamp = new Date('2025-09-17T20:41:58').getTime();
+
+        // Calcul basé sur 0.5 seconde par slot
+        const slotDiff = slot - referenceSlot;
+        const timestampDiff = slotDiff * 500; // 0.5 sec = 500ms per slot
+
+        return referenceTimestamp + timestampDiff;
+    },
+
+    // Formatter une date à partir d'un slot
+    formatSlotToDateTime(slot) {
+        if (!slot) return '-';
+
+        const timestamp = this.slotToTimestamp(slot);
+        if (!timestamp) return `Slot ${slot}`;
+
+        const date = new Date(timestamp);
+        return date.toLocaleString('fr-FR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+    },
+
     // Copier dans le presse-papier
     async copyToClipboard(text) {
         try {
@@ -1131,7 +1165,10 @@ const PageManager = {
                 <div class="transaction-item" onclick="SearchManager.showTransactionModal(${JSON.stringify(tx).replace(/"/g, '&quot;')})">
                     <div class="tx-main-info">
                         <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
-                        <span class="tx-type ${txType}">${txType === 'sent' ? 'Sent' : txType === 'recv' ? 'Received' : 'Transaction'}</span>
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start;">
+                            <span class="tx-type ${txType}" style="display: inline-block; width: auto;">${txType === 'sent' ? 'Sent' : txType === 'recv' ? 'Received' : 'Transaction'}</span>
+                            ${tx.metadata?.entry_slot ? `<span style="font-size: 0.8em; color: #b3b3b3;">${Utils.formatSlotToDateTime(tx.metadata.entry_slot)}</span>` : ''}
+                        </div>
                     </div>
                     <div class="tx-details">
                         <div class="tx-function">${action.function}</div>
@@ -1749,6 +1786,13 @@ const SearchManager = {
                                 ${formattedAmount}
                             </span>
                         </div>
+                        ${tx.metadata && tx.metadata.entry_slot ? `
+                        <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
+                            <strong>Date:</strong>
+                            <span style="color: #b3b3b3;">
+                                ${Utils.formatSlotToDateTime(tx.metadata.entry_slot)}
+                            </span>
+                        </div>` : ''}
                     </div>
                 </div>
             `;
