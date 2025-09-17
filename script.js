@@ -1013,9 +1013,11 @@ const BlockExplorer = {
         }
     },
 
-    renderBlockModal(block) {
+    async renderBlockModal(block) {
         const modalBody = document.getElementById('modalBody');
-        const html = `
+
+        // Affichage initial des informations du bloc
+        let html = `
             <h2>Block #${block.header_unpacked.height} Details</h2>
             <div style="margin: 2rem 0;">
                 <div style="display: grid; gap: 1rem;">
@@ -1025,19 +1027,127 @@ const BlockExplorer = {
                     <div><strong>Previous Slot:</strong> ${block.header_unpacked.prev_slot}</div>
                     <div><strong>Previous Hash:</strong> ${Utils.formatHash(block.header_unpacked.prev_hash, 16)}</div>
                     <div><strong>Signer:</strong> ${Utils.formatHash(block.header_unpacked.signer, 12)}</div>
-                    <div><strong>Transaction Count:</strong> ${block.tx_count}</div>
+                    <div><strong>Transaction Count:</strong> ${block.tx_count || 0}</div>
                     ${block.consensus ? `<div><strong>Consensus Score:</strong> ${block.consensus.score}</div>` : ''}
                 </div>
             </div>
         `;
+
+        // Si le bloc contient des transactions, les afficher
+        if (block.tx_count && block.tx_count > 0) {
+            html += `
+                <div style="margin-top: 2rem;">
+                    <h3>Transactions (${block.tx_count})</h3>
+                    <div id="blockTransactionsList" style="margin-top: 1rem;">
+                        <div class="loading">Loading transactions...</div>
+                    </div>
+                </div>
+            `;
+        }
+
         modalBody.innerHTML = html;
         document.getElementById('modal').style.display = 'block';
+
+        // Charger les transactions si le bloc en contient
+        if (block.tx_count && block.tx_count > 0) {
+            this.loadBlockTransactions(block.hash);
+        }
+    },
+
+    async loadBlockTransactions(blockHash) {
+        try {
+            const transactionsContainer = document.getElementById('blockTransactionsList');
+            const txsData = await API.getTransactionsByEntry(blockHash);
+
+            if (txsData.txs && txsData.txs.length > 0) {
+                this.renderBlockTransactions(txsData.txs, transactionsContainer);
+            } else {
+                transactionsContainer.innerHTML = '<div class="text-secondary">No transactions found in this block</div>';
+            }
+        } catch (error) {
+            console.error('Error loading block transactions:', error);
+            const transactionsContainer = document.getElementById('blockTransactionsList');
+            if (transactionsContainer) {
+                transactionsContainer.innerHTML = '<div class="text-secondary">Error loading transactions</div>';
+            }
+        }
+    },
+
+    renderBlockTransactions(transactions, container) {
+        const html = transactions.map((tx, index) => {
+            const action = tx.tx.actions[0];
+            const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
+
+            let amount = '';
+            let recipient = '';
+
+            if (isTransfer && action.args.length >= 2) {
+                try {
+                    const amountValue = action.args[1];
+                    const symbol = action.args[2] || 'AMA';
+                    amount = `${parseFloat(amountValue) / 1e9} ${symbol}`;
+                    recipient = action.args[0] ? Utils.formatHash(action.args[0], 12) : '';
+                } catch (e) {
+                    amount = `${action.args[1]} ${action.args[2] || 'AMA'}`;
+                }
+            }
+
+            return `
+                <div class="transaction-item-modal" onclick="SearchManager.showTransactionModal(${JSON.stringify(tx).replace(/"/g, '&quot;')})" style="
+                    padding: 1rem;
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 8px;
+                    margin-bottom: 0.5rem;
+                    cursor: pointer;
+                    transition: background-color 0.2s;
+                    display: grid;
+                    grid-template-columns: 1fr auto;
+                    gap: 1rem;
+                    align-items: center;
+                " onmouseover="this.style.backgroundColor='rgba(0, 212, 255, 0.1)'" onmouseout="this.style.backgroundColor='transparent'">
+                    <div>
+                        <div style="font-weight: bold; color: #00d4ff; margin-bottom: 0.5rem;">
+                            #${index + 1}: ${Utils.formatHash(tx.hash, 16)}
+                        </div>
+                        <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; font-size: 0.9em;">
+                            <div><strong>Function:</strong></div>
+                            <div>${action.function}</div>
+                            <div><strong>Contract:</strong></div>
+                            <div>${action.contract}</div>
+                            ${isTransfer ?
+                                `<div><strong>From:</strong></div><div><span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 12)}</span></div>
+                                 ${recipient ? `<div><strong>To:</strong></div><div><span onclick="BlockExplorer.viewAddress('${recipient}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">${Utils.formatHash(recipient, 12)}</span></div>` : ''}` :
+                                `<div><strong>Signer:</strong></div><div><span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 12)}</span></div>`
+                            }
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        ${amount ? `<div style="font-weight: bold; color: #00d4ff; font-size: 1.1em;">${amount}</div>` : ''}
+                        <div style="font-size: 0.9em; color: #b3b3b3;">Nonce: ${tx.tx.nonce}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = html;
+    },
+
+    viewAddress(address) {
+        // Fonction pour naviguer vers la page d'une adresse
+        AppState.currentAddress = address;
+        document.getElementById('modal').style.display = 'none';
+        PageManager.showPage('address');
     }
 };
 
 // Recherche
 const SearchManager = {
+    recentSearches: [],
+    maxRecentSearches: 10,
+
     init() {
+        this.loadRecentSearches();
+
         const searchInput = document.getElementById('searchInput');
         const searchBtn = document.getElementById('searchBtn');
 
@@ -1050,6 +1160,9 @@ const SearchManager = {
                 this.performSearch(searchInput.value);
             }
         });
+
+        // Ajouter les événements pour l'historique de recherche
+        this.initSearchHistory(searchInput);
 
         // Recherche de block par hauteur
         const blockHeightInput = document.getElementById('blockHeightInput');
@@ -1111,13 +1224,200 @@ const SearchManager = {
         }
     },
 
+    loadRecentSearches() {
+        try {
+            const stored = localStorage.getItem('amadeus_recent_searches');
+            if (stored) {
+                this.recentSearches = JSON.parse(stored);
+            }
+        } catch (error) {
+            console.error('Error loading recent searches:', error);
+            this.recentSearches = [];
+        }
+    },
+
+    saveRecentSearches() {
+        try {
+            localStorage.setItem('amadeus_recent_searches', JSON.stringify(this.recentSearches));
+        } catch (error) {
+            console.error('Error saving recent searches:', error);
+        }
+    },
+
+    addToRecentSearches(query) {
+        const trimmedQuery = query.trim();
+        if (!trimmedQuery) return;
+
+        // Supprimer la recherche si elle existe déjà
+        this.recentSearches = this.recentSearches.filter(search => search.query !== trimmedQuery);
+
+        // Ajouter la nouvelle recherche en première position
+        this.recentSearches.unshift({
+            query: trimmedQuery,
+            timestamp: Date.now(),
+            type: this.detectSearchType(trimmedQuery)
+        });
+
+        // Limiter le nombre de recherches récentes
+        if (this.recentSearches.length > this.maxRecentSearches) {
+            this.recentSearches = this.recentSearches.slice(0, this.maxRecentSearches);
+        }
+
+        this.saveRecentSearches();
+    },
+
+    detectSearchType(query) {
+        if (/^\d+$/.test(query)) {
+            return 'block';
+        } else if (query.length === 64 || query.length === 44) {
+            return 'hash';
+        } else if (query.length === 98 || query.length === 48 || query.length === 66) {
+            return 'address';
+        }
+        return 'unknown';
+    },
+
+    initSearchHistory(searchInput) {
+        // Créer le dropdown pour l'historique
+        const searchContainer = searchInput.parentElement;
+        const dropdown = document.createElement('div');
+        dropdown.id = 'searchHistoryDropdown';
+        dropdown.style.cssText = `
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: rgba(20, 20, 40, 0.95);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            margin-top: 4px;
+            backdrop-filter: blur(10px);
+        `;
+        searchContainer.style.position = 'relative';
+        searchContainer.appendChild(dropdown);
+
+        // Events pour afficher/cacher l'historique
+        searchInput.addEventListener('focus', () => {
+            this.showSearchHistory(dropdown);
+        });
+
+        searchInput.addEventListener('input', () => {
+            if (searchInput.value.trim()) {
+                this.hideSearchHistory(dropdown);
+            } else {
+                this.showSearchHistory(dropdown);
+            }
+        });
+
+        // Cacher quand on clique ailleurs
+        document.addEventListener('click', (e) => {
+            if (!searchContainer.contains(e.target)) {
+                this.hideSearchHistory(dropdown);
+            }
+        });
+    },
+
+    showSearchHistory(dropdown) {
+        if (this.recentSearches.length === 0) {
+            dropdown.style.display = 'none';
+            return;
+        }
+
+        const html = this.recentSearches.map((search, index) => {
+            const typeIcon = {
+                'block': 'fas fa-cube',
+                'hash': 'fas fa-hashtag',
+                'address': 'fas fa-wallet',
+                'unknown': 'fas fa-search'
+            }[search.type];
+
+            const timeAgo = this.getTimeAgo(search.timestamp);
+
+            return `
+                <div class="search-history-item" onclick="SearchManager.selectRecentSearch('${search.query.replace(/'/g, "\\'")}')"
+                     style="padding: 0.75rem 1rem; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; gap: 0.75rem; transition: background-color 0.2s;"
+                     onmouseover="this.style.backgroundColor='rgba(0, 212, 255, 0.1)'"
+                     onmouseout="this.style.backgroundColor='transparent'">
+                    <i class="${typeIcon}" style="color: #00d4ff; width: 16px;"></i>
+                    <div style="flex: 1;">
+                        <div style="font-size: 0.9em; color: #ffffff;">${Utils.formatHash(search.query, 20)}</div>
+                        <div style="font-size: 0.75em; color: #b3b3b3;">${timeAgo}</div>
+                    </div>
+                    <i class="fas fa-times" onclick="event.stopPropagation(); SearchManager.removeRecentSearch(${index})"
+                       style="color: #666; font-size: 0.8em; padding: 4px; cursor: pointer;"
+                       title="Supprimer"></i>
+                </div>
+            `;
+        }).join('');
+
+        dropdown.innerHTML = `
+            <div style="padding: 0.5rem 1rem; font-size: 0.8em; color: #b3b3b3; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                <i class="fas fa-history"></i> Recherches récentes
+            </div>
+            ${html}
+            <div style="padding: 0.5rem 1rem; text-align: center; border-top: 1px solid rgba(255,255,255,0.1);">
+                <button onclick="SearchManager.clearRecentSearches()" style="background: none; border: none; color: #b3b3b3; cursor: pointer; font-size: 0.8em;">
+                    <i class="fas fa-trash"></i> Effacer tout
+                </button>
+            </div>
+        `;
+
+        dropdown.style.display = 'block';
+    },
+
+    hideSearchHistory(dropdown) {
+        dropdown.style.display = 'none';
+    },
+
+    selectRecentSearch(query) {
+        const searchInput = document.getElementById('searchInput');
+        searchInput.value = query;
+        this.hideSearchHistory(document.getElementById('searchHistoryDropdown'));
+        this.performSearch(query);
+    },
+
+    removeRecentSearch(index) {
+        this.recentSearches.splice(index, 1);
+        this.saveRecentSearches();
+        this.showSearchHistory(document.getElementById('searchHistoryDropdown'));
+    },
+
+    clearRecentSearches() {
+        this.recentSearches = [];
+        this.saveRecentSearches();
+        this.hideSearchHistory(document.getElementById('searchHistoryDropdown'));
+    },
+
+    getTimeAgo(timestamp) {
+        const now = Date.now();
+        const diff = now - timestamp;
+        const minutes = Math.floor(diff / (1000 * 60));
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+        if (days > 0) return `il y a ${days}j`;
+        if (hours > 0) return `il y a ${hours}h`;
+        if (minutes > 0) return `il y a ${minutes}min`;
+        return 'maintenant';
+    },
+
     async performSearch(query) {
         if (!query.trim()) return;
 
         const trimmedQuery = query.trim();
         console.log('Searching for:', trimmedQuery, 'Length:', trimmedQuery.length);
 
+        // Cacher le dropdown d'historique
+        this.hideSearchHistory(document.getElementById('searchHistoryDropdown'));
+
         try {
+            // Ajouter à l'historique de recherche
+            this.addToRecentSearches(trimmedQuery);
+
             // Détecter le type de recherche
             if (/^\d+$/.test(trimmedQuery)) {
                 console.log('Detected as block height');
@@ -1201,21 +1501,72 @@ const SearchManager = {
     showTransactionModal(tx) {
         const modalBody = document.getElementById('modalBody');
         const action = tx.tx.actions[0];
+        const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
+
+        // Extraire les informations de transfer si c'est le cas
+        let transferInfo = '';
+        if (isTransfer && action.args.length >= 2) {
+            const recipient = action.args[0];
+            const amountValue = action.args[1];
+            const symbol = action.args[2] || 'AMA';
+
+            let formattedAmount = '';
+            try {
+                formattedAmount = `${parseFloat(amountValue) / 1e9} ${symbol}`;
+            } catch (e) {
+                formattedAmount = `${amountValue} ${symbol}`;
+            }
+
+            transferInfo = `
+                <div style="background: rgba(0, 212, 255, 0.1); padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+                    <h3 style="margin: 0 0 1rem 0; color: #00d4ff;"><i class="fas fa-exchange-alt"></i> Transfer Details</h3>
+                    <div style="display: grid; gap: 0.75rem;">
+                        <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
+                            <strong>From:</strong>
+                            <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">
+                                ${Utils.formatHash(tx.tx.signer, 16)}
+                            </span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
+                            <strong>To:</strong>
+                            <span onclick="BlockExplorer.viewAddress('${recipient}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">
+                                ${Utils.formatHash(recipient, 16)}
+                            </span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
+                            <strong>Amount:</strong>
+                            <span style="font-weight: bold; color: #00d4ff; font-size: 1.1em;">
+                                ${formattedAmount}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
 
         const html = `
             <h2>Transaction Details</h2>
+            ${transferInfo}
             <div style="margin: 2rem 0;">
                 <div style="display: grid; gap: 1rem;">
-                    <div><strong>Hash:</strong> <span onclick="Utils.copyToClipboard('${tx.hash}')" style="cursor: pointer; color: #00d4ff;">${tx.hash}</span></div>
-                    <div><strong>Signer:</strong> ${Utils.formatHash(tx.tx.signer, 12)}</div>
+                    <div><strong>Hash:</strong> <span onclick="Utils.copyToClipboard('${tx.hash}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;" title="Cliquer pour copier">${tx.hash}</span></div>
+                    ${!isTransfer ? `<div><strong>Signer:</strong> <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 16)}</span></div>` : ''}
                     <div><strong>Nonce:</strong> ${tx.tx.nonce}</div>
                     <div><strong>Contract:</strong> ${action.contract}</div>
                     <div><strong>Function:</strong> ${action.function}</div>
-                    <div><strong>Arguments:</strong> ${JSON.stringify(action.args, null, 2)}</div>
-                    ${tx.metadata ? `<div><strong>Block:</strong> ${Utils.formatHash(tx.metadata.entry_hash, 12)}</div>` : ''}
+                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="Utils.copyToClipboard('${tx.metadata.entry_hash}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;" title="Cliquer pour copier">${Utils.formatHash(tx.metadata.entry_hash, 16)}</span></div>` : ''}
                     ${tx.metadata ? `<div><strong>Slot:</strong> ${tx.metadata.entry_slot}</div>` : ''}
                 </div>
             </div>
+
+            ${action.args && action.args.length > 0 ? `
+                <div style="margin-top: 2rem;">
+                    <h3>Raw Arguments</h3>
+                    <div style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; font-family: monospace; font-size: 0.9em; overflow-x: auto;">
+                        <pre>${JSON.stringify(action.args, null, 2)}</pre>
+                    </div>
+                </div>
+            ` : ''}
         `;
         modalBody.innerHTML = html;
         document.getElementById('modal').style.display = 'block';
