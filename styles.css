@@ -550,6 +550,16 @@ body {
     backdrop-filter: blur(10px);
 }
 
+.transaction-filters select:hover {
+    border-color: #00d4ff;
+}
+
+.transaction-filters select option {
+    background: rgba(20, 20, 40, 0.95);
+    color: white;
+    padding: 0.5rem;
+}
+
 .transaction-item {
     display: flex;
     justify-content: space-between;
