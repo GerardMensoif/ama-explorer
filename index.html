@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amadeus Explorer</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <img src="logo.svg" alt="Amadeus" class="nav-logo">
+                <span>Explorer</span>
+            </div>
+            <div class="nav-menu">
+                <a href="#" class="nav-link active" data-page="home">Home</a>
+                <a href="#" class="nav-link" data-page="blocks">Blocks</a>
+                <a href="#" class="nav-link" data-page="transactions">Transactions</a>
+                <a href="#" class="nav-link" data-page="richlist">Rich List</a>
+                <a href="#" class="nav-link" data-page="pflops">PFLOPS Chart</a>
+                <a href="#" class="nav-link" data-page="address" style="display: none;">Address</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <!-- Page d'accueil -->
+        <div id="home" class="page active">
+            <div class="hero-section">
+                <h1>Amadeus Blockchain Explorer</h1>
+                <p>Explore the Amadeus blockchain in real-time</p>
+
+                <div class="search-container">
+                    <input type="text" id="searchInput" placeholder="Search for a transaction, block or address...">
+                    <button id="searchBtn"><i class="fas fa-search"></i></button>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-cubes"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="currentEpoch">-</h3>
+                        <p>Current Epoch</p>
+                    </div>
+                </div>
+
+
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-coins"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="circulatingSupply">-</h3>
+                        <p>Circulating Supply</p>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-tachometer-alt"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="pflopsStat">-</h3>
+                        <p>PFLOPS</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="content-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Latest Blocks</h2>
+                        <a href="#" class="view-all" data-page="blocks">View All</a>
+                    </div>
+                    <div class="card-content">
+                        <div id="latestBlocks" class="blocks-list">
+                            <div class="loading">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Latest Transactions</h2>
+                        <a href="#" class="view-all" data-page="transactions">View All</a>
+                    </div>
+                    <div class="card-content">
+                        <div id="latestTransactions" class="transactions-list">
+                            <div class="loading">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Page des blocks -->
+        <div id="blocks" class="page">
+            <div class="page-header">
+                <h1>Blocks</h1>
+                <div class="page-controls">
+                    <input type="number" id="blockHeightInput" placeholder="Block height">
+                    <button id="searchBlockBtn">Search</button>
+                </div>
+            </div>
+            <div id="blocksContainer" class="blocks-container">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Page des transactions -->
+        <div id="transactions" class="page">
+            <div class="page-header">
+                <h1>Transactions</h1>
+                <div class="page-controls">
+                    <input type="text" id="txHashInput" placeholder="Transaction hash">
+                    <button id="searchTxBtn">Search</button>
+                </div>
+            </div>
+            <div id="transactionsContainer" class="transactions-container">
+                <div class="card">
+                    <div class="card-content">
+                        <p>Enter a transaction hash above to search for a specific transaction.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Page Rich List -->
+        <div id="richlist" class="page">
+            <div class="page-header">
+                <h1>Rich List</h1>
+                <div class="page-info">
+                    <p>Top 100 addresses with the highest AMA balances</p>
+                </div>
+            </div>
+
+            <div class="stats-summary">
+                <div class="summary-card">
+                    <div class="summary-content">
+                        <h3 id="totalHolders">-</h3>
+                        <p>Total Holders</p>
+                    </div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-content">
+                        <h3 id="totalSupplyHeld">-</h3>
+                        <p>Total Supply Held</p>
+                    </div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-content">
+                        <h3 id="top10Percentage">-</h3>
+                        <p>Top 10 Hold</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2><i class="fas fa-crown"></i> Top 100 Richest Addresses</h2>
+                    <div class="richlist-filters">
+                        <select id="richlistLimit">
+                            <option value="25">Top 25</option>
+                            <option value="50">Top 50</option>
+                            <option value="100" selected>Top 100</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="card-content">
+                    <div id="richlistContainer">
+                        <div class="loading">Loading rich list...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Page PFLOPS Chart -->
+        <div id="pflops" class="page">
+            <div class="page-header">
+                <h1>PFLOPS Historical Chart</h1>
+                <div class="page-info">
+                    <p>Historical performance data of the Amadeus network</p>
+                </div>
+            </div>
+
+            <div class="chart-controls">
+                <div class="time-filters">
+                    <button class="time-filter active" data-period="24h">Last 24 Hours</button>
+                    <button class="time-filter" data-period="7d">Last 7 Days</button>
+                    <button class="time-filter" data-period="30d">Last 30 Days</button>
+                    <button class="time-filter" data-period="all">All Time</button>
+                </div>
+            </div>
+
+            <div class="chart-stats">
+                <div class="stat-item">
+                    <span class="stat-label">Current PFLOPS:</span>
+                    <span class="stat-value" id="currentPflops">-</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Average (24h):</span>
+                    <span class="stat-value" id="avgPflops24h">-</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Peak (24h):</span>
+                    <span class="stat-value" id="peakPflops24h">-</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Total Entries:</span>
+                    <span class="stat-value" id="totalEntries">-</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2><i class="fas fa-chart-line"></i> PFLOPS Performance Over Time</h2>
+                </div>
+                <div class="card-content">
+                    <div id="pflopschartContainer">
+                        <canvas id="pflopsChart" width="800" height="400"></canvas>
+                        <div id="chartLoading" class="loading">Loading chart data...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Page d'une adresse -->
+        <div id="address" class="page">
+            <div class="page-header">
+                <h1 id="addressTitle">Address</h1>
+                <div class="page-controls">
+                    <button id="copyAddressBtn"><i class="fas fa-copy"></i> Copy</button>
+                </div>
+            </div>
+
+            <div class="content-grid">
+                <!-- Balances -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-wallet"></i> Balances</h2>
+                    </div>
+                    <div class="card-content">
+                        <div id="addressBalances">
+                            <div class="loading">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statistiques -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-chart-bar"></i> Statistics</h2>
+                    </div>
+                    <div class="card-content">
+                        <div id="addressStats">
+                            <div class="stat-row">
+                                <span>Total transactions:</span>
+                                <span id="totalTxCount">-</span>
+                            </div>
+                            <div class="stat-row">
+                                <span>Sent transactions:</span>
+                                <span id="sentTxCount">-</span>
+                            </div>
+                            <div class="stat-row">
+                                <span>Received transactions:</span>
+                                <span id="receivedTxCount">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Historique des transactions -->
+            <div class="card" style="margin-top: 2rem;">
+                <div class="card-header">
+                    <h2><i class="fas fa-history"></i> Transaction History</h2>
+                    <div class="transaction-filters">
+                        <select id="txTypeFilter">
+                            <option value="all">All</option>
+                            <option value="sent">Sent</option>
+                            <option value="recv">Received</option>
+                        </select>
+                        <select id="txLimitFilter">
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="card-content">
+                    <div id="addressTransactions">
+                        <div class="loading">Loading...</div>
+                    </div>
+                    <div id="loadMoreContainer" style="text-align: center; margin-top: 1rem;">
+                        <button id="loadMoreTxBtn" style="display: none;">Load More</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal pour les détails -->
+        <div id="modal" class="modal">
+            <div class="modal-content">
+                <span class="modal-close">&times;</span>
+                <div id="modalBody"></div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="footer-content">
+            <p>&copy; 2025 Amadeus</p>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
