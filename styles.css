@@ -39,7 +39,7 @@ body {
     gap: 0.5rem;
     font-size: 1.5rem;
     font-weight: bold;
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
 }
 
 .nav-logo {
@@ -63,7 +63,7 @@ body {
 
 .nav-link:hover,
 .nav-link.active {
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     background: rgba(0, 212, 255, 0.1);
 }
 
@@ -99,7 +99,7 @@ body {
 .hero-section h1 {
     font-size: 3rem;
     margin-bottom: 1rem;
-    background: linear-gradient(45deg, #00d4ff, #0099cc);
+    background: linear-gradient(45deg, rgb(24, 255, 178), #0099cc);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -136,7 +136,7 @@ body {
 
 #searchBtn {
     padding: 1rem 1.5rem;
-    background: linear-gradient(45deg, #00d4ff, #0099cc);
+    background: linear-gradient(45deg, rgb(24, 255, 178), #0099cc);
     border: none;
     border-radius: 12px;
     color: white;
@@ -177,7 +177,7 @@ body {
 }
 
 .stat-icon {
-    background: linear-gradient(45deg, #00d4ff, #0099cc);
+    background: linear-gradient(45deg, rgb(24, 255, 178), #0099cc);
     color: white;
     width: 60px;
     height: 60px;
@@ -191,7 +191,7 @@ body {
 .stat-content h3 {
     font-size: 1.8rem;
     margin-bottom: 0.5rem;
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -234,7 +234,7 @@ body {
 
 .card-header h2 {
     font-size: 1.5rem;
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
 }
 
 .view-all {
@@ -246,7 +246,7 @@ body {
 }
 
 .view-all:hover {
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
 }
 
 .card-content {
@@ -276,7 +276,7 @@ body {
 }
 
 .block-info h4 {
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     margin-bottom: 0.5rem;
 }
 
@@ -291,7 +291,7 @@ body {
 
 .block-meta .tx-count {
     background: rgba(0, 212, 255, 0.2);
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     padding: 0.2rem 0.5rem;
     border-radius: 12px;
     font-size: 0.8rem;
@@ -315,7 +315,7 @@ body {
 
 .page-header h1 {
     font-size: 2.5rem;
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
 }
 
 .page-controls {
@@ -334,7 +334,7 @@ body {
 
 .page-controls button {
     padding: 0.8rem 1.5rem;
-    background: linear-gradient(45deg, #00d4ff, #0099cc);
+    background: linear-gradient(45deg, rgb(24, 255, 178), #0099cc);
     border: none;
     border-radius: 8px;
     color: white;
@@ -383,7 +383,7 @@ body {
 }
 
 .modal-close:hover {
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
 }
 
 /* Loading */
@@ -482,7 +482,7 @@ body {
 }
 
 .tx-hash-small {
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     font-family: 'Courier New', monospace;
     font-size: 0.85rem;
     margin-bottom: 0.3rem;
@@ -527,7 +527,7 @@ body {
 
 .balance-symbol {
     font-weight: bold;
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     font-size: 1.1rem;
 }
 
@@ -551,7 +551,7 @@ body {
 }
 
 .transaction-filters select:hover {
-    border-color: #00d4ff;
+    border-color: rgb(24, 255, 178);
 }
 
 .transaction-filters select option {
@@ -582,7 +582,7 @@ body {
 }
 
 .tx-hash {
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     font-family: 'Courier New', monospace;
     font-size: 0.9rem;
     margin-bottom: 0.5rem;
@@ -617,7 +617,7 @@ body {
 }
 
 .tx-contract {
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     font-size: 0.8rem;
 }
 
@@ -642,7 +642,7 @@ body {
     align-items: center;
     gap: 0.5rem;
     padding: 0.8rem 1.5rem;
-    background: linear-gradient(45deg, #00d4ff, #0099cc);
+    background: linear-gradient(45deg, rgb(24, 255, 178), #0099cc);
     border: none;
     border-radius: 8px;
     color: white;
@@ -659,7 +659,7 @@ body {
     background: rgba(0, 212, 255, 0.2);
     border: 1px solid rgba(0, 212, 255, 0.5);
     border-radius: 8px;
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     cursor: pointer;
     transition: all 0.3s ease;
 }
@@ -676,7 +676,7 @@ body {
 }
 
 .text-primary {
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
 }
 
 .text-secondary {
@@ -684,7 +684,7 @@ body {
 }
 
 .bg-primary {
-    background: linear-gradient(45deg, #00d4ff, #0099cc);
+    background: linear-gradient(45deg, rgb(24, 255, 178), #0099cc);
 }
 
 .rounded {
@@ -724,7 +724,7 @@ body {
 .summary-content h3 {
     font-size: 1.8rem;
     margin-bottom: 0.5rem;
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -777,7 +777,7 @@ body {
     background: rgba(0, 212, 255, 0.1);
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     font-weight: 600;
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     font-size: 0.9rem;
 }
 
@@ -798,7 +798,7 @@ body {
 
 .table-row:hover {
     background: rgba(0, 212, 255, 0.05);
-    border-left: 4px solid #00d4ff;
+    border-left: 4px solid rgb(24, 255, 178);
     padding-left: calc(1rem - 4px);
 }
 
@@ -832,7 +832,7 @@ body {
 }
 
 .address-link {
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     text-decoration: none;
     font-family: 'Courier New', monospace;
     font-size: 0.9rem;
@@ -953,8 +953,8 @@ body {
 }
 
 .time-filter.active {
-    background: linear-gradient(45deg, #00d4ff, #0099cc);
-    border-color: #00d4ff;
+    background: linear-gradient(45deg, rgb(24, 255, 178), #0099cc);
+    border-color: rgb(24, 255, 178);
     box-shadow: 0 2px 8px rgba(0, 212, 255, 0.3);
 }
 
@@ -987,7 +987,7 @@ body {
 }
 
 .stat-value {
-    color: #00d4ff;
+    color: rgb(24, 255, 178);
     font-size: 1.2rem;
     font-weight: bold;
 }

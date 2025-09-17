@@ -72,7 +72,7 @@ const Utils = {
             position: fixed;
             top: 20px;
             right: 20px;
-            background: ${type === 'success' ? '#00d4ff' : '#ff4444'};
+            background: ${type === 'success' ? 'rgb(24, 255, 178)' : '#ff4444'};
             color: white;
             padding: 1rem 2rem;
             border-radius: 8px;
@@ -418,24 +418,234 @@ const PageManager = {
     },
 
     async loadBlocksPage() {
-        // Implémentation pour la page des blocks
         const container = document.getElementById('blocksContainer');
-        container.innerHTML = '<div class="loading">Chargement des blocks...</div>';
+        container.innerHTML = '<div class="loading">Loading latest 50 blocks...</div>';
 
-        // Ici on peut implémenter une pagination des blocks
-        // Pour l'instant, on affiche un message
-        container.innerHTML = `
+        try {
+            if (!AppState.stats || !AppState.stats.height) {
+                // Charger les stats si pas encore disponibles
+                const statsData = await API.getStats();
+                if (statsData.stats) {
+                    AppState.stats = statsData.stats;
+                }
+            }
+
+            if (!AppState.stats || !AppState.stats.height) {
+                container.innerHTML = `
+                    <div class="card">
+                        <div class="card-content">
+                            <p>Unable to load blockchain stats. Enter a block height above to search for a specific block.</p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            const currentHeight = AppState.stats.height;
+            const blocks = [];
+
+            // Charger les 50 derniers blocks
+            for (let i = 0; i < 50; i++) {
+                const height = currentHeight - i;
+                if (height < 0) break;
+
+                try {
+                    const blockData = await API.getBlocksByHeight(height);
+                    if (blockData.entries && blockData.entries.length > 0) {
+                        blocks.push(...blockData.entries);
+                    }
+                } catch (error) {
+                    console.warn(`Cannot load block ${height}:`, error);
+                }
+            }
+
+            this.renderBlocksPage(blocks.slice(0, 50));
+        } catch (error) {
+            console.error('Error loading blocks page:', error);
+            container.innerHTML = `
+                <div class="card">
+                    <div class="card-content">
+                        <p>Error loading blocks. Enter a block height above to search for a specific block.</p>
+                    </div>
+                </div>
+            `;
+        }
+    },
+
+    renderBlocksPage(blocks) {
+        const container = document.getElementById('blocksContainer');
+
+        if (!blocks || blocks.length === 0) {
+            container.innerHTML = `
+                <div class="card">
+                    <div class="card-content">
+                        <p>No blocks available. Enter a block height above to search for a specific block.</p>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        // Utiliser le slot le plus récent comme référence
+        const currentSlot = blocks.length > 0 ? blocks[0].header_unpacked.slot : null;
+
+        const html = `
             <div class="card">
+                <div class="card-header">
+                    <h2><i class="fas fa-cubes"></i> Latest 50 Blocks</h2>
+                </div>
                 <div class="card-content">
-                    <p>Enter a block height above to search for a specific block.</p>
+                    <div class="blocks-list">
+                        ${blocks.map((block, index) => `
+                            <div class="block-item" onclick="BlockExplorer.renderBlockModal(${JSON.stringify(block).replace(/"/g, '&quot;')})">
+                                <div class="block-info">
+                                    <h4>Block #${block.header_unpacked.height}</h4>
+                                    <p class="text-truncate">${Utils.formatHash(block.hash, 16)}</p>
+                                </div>
+                                <div class="block-meta">
+                                    <div class="tx-count">${block.tx_count || 0} txs</div>
+                                    <div class="time">${Utils.formatTimeAgo(block.header_unpacked.slot, currentSlot)}</div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
             </div>
         `;
+
+        container.innerHTML = html;
     },
 
     async loadTransactionsPage() {
-        // La page transactions affiche maintenant le contenu par défaut défini dans le HTML
-        // avec la barre de recherche pour les hash de transaction
+        const container = document.getElementById('transactionsContainer');
+        container.innerHTML = '<div class="loading">Loading latest 50 transactions...</div>';
+
+        try {
+            if (!AppState.stats || !AppState.stats.height) {
+                // Charger les stats si pas encore disponibles
+                const statsData = await API.getStats();
+                if (statsData.stats) {
+                    AppState.stats = statsData.stats;
+                }
+            }
+
+            if (!AppState.stats || !AppState.stats.height) {
+                container.innerHTML = `
+                    <div class="card">
+                        <div class="card-content">
+                            <p>Unable to load blockchain stats. Enter a transaction hash above to search for a specific transaction.</p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            const currentHeight = AppState.stats.height;
+            let allTransactions = [];
+
+            // Charger les transactions des derniers blocks
+            for (let i = 0; i < 20 && allTransactions.length < 50; i++) {
+                const height = currentHeight - i;
+                if (height < 0) break;
+
+                try {
+                    const blockData = await API.getBlocksByHeight(height);
+                    if (blockData.entries && blockData.entries.length > 0) {
+                        for (const entry of blockData.entries) {
+                            if (entry.txs && entry.txs.length > 0) {
+                                // Récupérer les détails des transactions
+                                const txsData = await API.getTransactionsByEntry(entry.hash);
+                                if (txsData.txs) {
+                                    allTransactions.push(...txsData.txs);
+                                }
+                                if (allTransactions.length >= 50) break;
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`Cannot load transactions for block ${height}:`, error);
+                }
+            }
+
+            this.renderTransactionsPage(allTransactions.slice(0, 50));
+        } catch (error) {
+            console.error('Error loading transactions page:', error);
+            container.innerHTML = `
+                <div class="card">
+                    <div class="card-content">
+                        <p>Error loading transactions. Enter a transaction hash above to search for a specific transaction.</p>
+                    </div>
+                </div>
+            `;
+        }
+    },
+
+    renderTransactionsPage(transactions) {
+        const container = document.getElementById('transactionsContainer');
+
+        if (!transactions || transactions.length === 0) {
+            container.innerHTML = `
+                <div class="card">
+                    <div class="card-content">
+                        <p>No recent transactions found. Enter a transaction hash above to search for a specific transaction.</p>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        const html = `
+            <div class="card">
+                <div class="card-header">
+                    <h2><i class="fas fa-exchange-alt"></i> Latest 50 Transactions</h2>
+                </div>
+                <div class="card-content">
+                    <div class="transactions-list">
+                        ${transactions.map(tx => {
+                            const action = tx.tx.actions[0];
+                            const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
+
+                            let amount = '';
+                            let recipient = '';
+
+                            if (isTransfer && action.args.length >= 2) {
+                                const amountValue = action.args[1];
+                                const symbol = action.args[2] || 'AMA';
+                                try {
+                                    amount = `${parseFloat(amountValue) / 1e9} ${symbol}`;
+                                    recipient = action.args[0] ? Utils.formatHash(action.args[0], 12) : '';
+                                } catch (e) {
+                                    amount = `${amountValue} ${symbol}`;
+                                }
+                            }
+
+                            return `
+                                <div class="transaction-item" onclick="SearchManager.showTransactionModal(${JSON.stringify(tx).replace(/"/g, '&quot;')})">
+                                    <div class="tx-main-info">
+                                        <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
+                                        <div class="tx-function">${action.function}</div>
+                                    </div>
+                                    <div class="tx-details">
+                                        ${isTransfer ?
+                                            `<div>From: <span onclick="event.stopPropagation(); BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 12)}</span></div>
+                                             ${recipient ? `<div>To: <span onclick="event.stopPropagation(); BlockExplorer.viewAddress('${recipient.replace(/'/g, "\\\'")}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(recipient, 12)}</span></div>` : ''}` :
+                                            `<div>Signer: <span onclick="event.stopPropagation(); BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 12)}</span></div>`
+                                        }
+                                        <div class="tx-contract">${action.contract}</div>
+                                    </div>
+                                    <div class="tx-meta">
+                                        ${amount ? `<div class="tx-amount">${amount}</div>` : ''}
+                                        <div class="tx-time">${tx.metadata?.entry_slot ? 'Slot ' + tx.metadata.entry_slot : '-'}</div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        container.innerHTML = html;
     },
 
     async loadRichlistPage() {
@@ -578,7 +788,7 @@ const PageManager = {
                 datasets: [{
                     label: 'PFLOPS',
                     data: chartData.values,
-                    borderColor: '#00d4ff',
+                    borderColor: 'rgb(24, 255, 178)',
                     backgroundColor: 'rgba(0, 212, 255, 0.1)',
                     fill: true,
                     tension: 0.4,
@@ -596,9 +806,9 @@ const PageManager = {
                     },
                     tooltip: {
                         backgroundColor: 'rgba(20, 20, 40, 0.95)',
-                        titleColor: '#00d4ff',
+                        titleColor: 'rgb(24, 255, 178)',
                         bodyColor: '#ffffff',
-                        borderColor: '#00d4ff',
+                        borderColor: 'rgb(24, 255, 178)',
                         borderWidth: 1,
                         callbacks: {
                             title: function(context) {
@@ -1021,7 +1231,7 @@ const BlockExplorer = {
             <h2>Block #${block.header_unpacked.height} Details</h2>
             <div style="margin: 2rem 0;">
                 <div style="display: grid; gap: 1rem;">
-                    <div><strong>Hash:</strong> <span onclick="Utils.copyToClipboard('${block.hash}')" style="cursor: pointer; color: #00d4ff;">${block.hash}</span></div>
+                    <div><strong>Hash:</strong> <span onclick="Utils.copyToClipboard('${block.hash}')" style="cursor: pointer; color: rgb(24, 255, 178);">${block.hash}</span></div>
                     <div><strong>Height:</strong> ${block.header_unpacked.height}</div>
                     <div><strong>Slot:</strong> ${block.header_unpacked.slot}</div>
                     <div><strong>Previous Slot:</strong> ${block.header_unpacked.prev_slot}</div>
@@ -1106,7 +1316,7 @@ const BlockExplorer = {
                     align-items: center;
                 " onmouseover="this.style.backgroundColor='rgba(0, 212, 255, 0.1)'" onmouseout="this.style.backgroundColor='transparent'">
                     <div>
-                        <div style="font-weight: bold; color: #00d4ff; margin-bottom: 0.5rem;">
+                        <div style="font-weight: bold; color: rgb(24, 255, 178); margin-bottom: 0.5rem;">
                             #${index + 1}: ${Utils.formatHash(tx.hash, 16)}
                         </div>
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; font-size: 0.9em;">
@@ -1115,14 +1325,14 @@ const BlockExplorer = {
                             <div><strong>Contract:</strong></div>
                             <div>${action.contract}</div>
                             ${isTransfer ?
-                                `<div><strong>From:</strong></div><div><span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 12)}</span></div>
-                                 ${recipient ? `<div><strong>To:</strong></div><div><span onclick="BlockExplorer.viewAddress('${recipient}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">${Utils.formatHash(recipient, 12)}</span></div>` : ''}` :
-                                `<div><strong>Signer:</strong></div><div><span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 12)}</span></div>`
+                                `<div><strong>From:</strong></div><div><span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 12)}</span></div>
+                                 ${recipient ? `<div><strong>To:</strong></div><div><span onclick="BlockExplorer.viewAddress('${recipient}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(recipient, 12)}</span></div>` : ''}` :
+                                `<div><strong>Signer:</strong></div><div><span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 12)}</span></div>`
                             }
                         </div>
                     </div>
                     <div style="text-align: right;">
-                        ${amount ? `<div style="font-weight: bold; color: #00d4ff; font-size: 1.1em;">${amount}</div>` : ''}
+                        ${amount ? `<div style="font-weight: bold; color: rgb(24, 255, 178); font-size: 1.1em;">${amount}</div>` : ''}
                         <div style="font-size: 0.9em; color: #b3b3b3;">Nonce: ${tx.tx.nonce}</div>
                     </div>
                 </div>
@@ -1342,7 +1552,7 @@ const SearchManager = {
                      style="padding: 0.75rem 1rem; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; gap: 0.75rem; transition: background-color 0.2s;"
                      onmouseover="this.style.backgroundColor='rgba(0, 212, 255, 0.1)'"
                      onmouseout="this.style.backgroundColor='transparent'">
-                    <i class="${typeIcon}" style="color: #00d4ff; width: 16px;"></i>
+                    <i class="${typeIcon}" style="color: rgb(24, 255, 178); width: 16px;"></i>
                     <div style="flex: 1;">
                         <div style="font-size: 0.9em; color: #ffffff;">${Utils.formatHash(search.query, 20)}</div>
                         <div style="font-size: 0.75em; color: #b3b3b3;">${timeAgo}</div>
@@ -1519,23 +1729,23 @@ const SearchManager = {
 
             transferInfo = `
                 <div style="background: rgba(0, 212, 255, 0.1); padding: 1rem; border-radius: 8px; margin: 1rem 0;">
-                    <h3 style="margin: 0 0 1rem 0; color: #00d4ff;"><i class="fas fa-exchange-alt"></i> Transfer Details</h3>
+                    <h3 style="margin: 0 0 1rem 0; color: rgb(24, 255, 178);"><i class="fas fa-exchange-alt"></i> Transfer Details</h3>
                     <div style="display: grid; gap: 0.75rem;">
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
                             <strong>From:</strong>
-                            <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">
+                            <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">
                                 ${Utils.formatHash(tx.tx.signer, 16)}
                             </span>
                         </div>
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
                             <strong>To:</strong>
-                            <span onclick="BlockExplorer.viewAddress('${recipient}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">
+                            <span onclick="BlockExplorer.viewAddress('${recipient}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">
                                 ${Utils.formatHash(recipient, 16)}
                             </span>
                         </div>
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
                             <strong>Amount:</strong>
-                            <span style="font-weight: bold; color: #00d4ff; font-size: 1.1em;">
+                            <span style="font-weight: bold; color: rgb(24, 255, 178); font-size: 1.1em;">
                                 ${formattedAmount}
                             </span>
                         </div>
@@ -1549,12 +1759,12 @@ const SearchManager = {
             ${transferInfo}
             <div style="margin: 2rem 0;">
                 <div style="display: grid; gap: 1rem;">
-                    <div><strong>Hash:</strong> <span onclick="Utils.copyToClipboard('${tx.hash}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;" title="Cliquer pour copier">${tx.hash}</span></div>
-                    ${!isTransfer ? `<div><strong>Signer:</strong> <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 16)}</span></div>` : ''}
+                    <div><strong>Hash:</strong> <span onclick="Utils.copyToClipboard('${tx.hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour copier">${tx.hash}</span></div>
+                    ${!isTransfer ? `<div><strong>Signer:</strong> <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 16)}</span></div>` : ''}
                     <div><strong>Nonce:</strong> ${tx.tx.nonce}</div>
                     <div><strong>Contract:</strong> ${action.contract}</div>
                     <div><strong>Function:</strong> ${action.function}</div>
-                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="Utils.copyToClipboard('${tx.metadata.entry_hash}')" style="cursor: pointer; color: #00d4ff; text-decoration: underline;" title="Cliquer pour copier">${Utils.formatHash(tx.metadata.entry_hash, 16)}</span></div>` : ''}
+                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="Utils.copyToClipboard('${tx.metadata.entry_hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour copier">${Utils.formatHash(tx.metadata.entry_hash, 16)}</span></div>` : ''}
                     ${tx.metadata ? `<div><strong>Slot:</strong> ${tx.metadata.entry_slot}</div>` : ''}
                 </div>
             </div>
@@ -1577,7 +1787,7 @@ const SearchManager = {
         const html = `
             <h2>Address Details</h2>
             <div style="margin: 2rem 0;">
-                <div><strong>Address:</strong> <span onclick="Utils.copyToClipboard('${address}')" style="cursor: pointer; color: #00d4ff;">${Utils.formatHash(address, 16)}</span></div>
+                <div><strong>Address:</strong> <span onclick="Utils.copyToClipboard('${address}')" style="cursor: pointer; color: rgb(24, 255, 178);">${Utils.formatHash(address, 16)}</span></div>
                 <h3 style="margin: 2rem 0 1rem 0;">Balances:</h3>
                 <div style="display: grid; gap: 0.5rem;">
                     ${balances.map(balance => `
