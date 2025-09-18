@@ -87,6 +87,7 @@ const Utils = {
         });
     },
 
+
     // Copier dans le presse-papier
     async copyToClipboard(text) {
         try {
@@ -1091,7 +1092,7 @@ const PageManager = {
                                 </div>
                                 <div class="address-col">
                                     <span class="address-link">${Utils.formatHash(entry.pk, 12)}</span>
-                                    ${(entry.pk.startsWith('69TDon8KJ') || entry.pk.startsWith('6969GaCysicY')) ? '<span class="team-badge">Team</span>' : ''}
+                                    ${(entry.pk.startsWith('69TDon8KJ') || entry.pk.startsWith('6969GaCysicY')) ? '<span class="team-badge">Treasury</span>' : ''}
                                 </div>
                                 <div class="balance-col">
                                     <span class="balance-amount">${Utils.formatNumber(balance)} AMA</span>
