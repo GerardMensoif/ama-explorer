@@ -280,6 +280,11 @@ const PageManager = {
                     url = `/block/${params.blockNumber}`;
                 }
                 break;
+            case 'transaction':
+                if (params && params.txHash) {
+                    url = `/transaction/${params.txHash}`;
+                }
+                break;
             case 'home':
                 url = '/';
                 break;
@@ -314,6 +319,10 @@ const PageManager = {
 
             if (type === 'block') {
                 return { page: 'block', params: { blockNumber: value } };
+            }
+
+            if (type === 'transaction' || type === 'tx') {
+                return { page: 'transaction', params: { txHash: value } };
             }
         }
 
@@ -357,6 +366,9 @@ const PageManager = {
                 break;
             case 'block':
                 await this.loadBlockPage(params);
+                break;
+            case 'transaction':
+                await this.loadTransactionPage(params);
                 break;
             case 'address':
                 await this.loadAddressPage();
@@ -521,7 +533,7 @@ const PageManager = {
             }
 
             return `
-                <div class="transaction-item-small" onclick="SearchManager.showTransactionModal(${JSON.stringify(tx).replace(/"/g, '&quot;')})">
+                <div class="transaction-item-small" onclick="PageManager.showPage('transaction', true, {txHash: '${tx.hash}'})">
                     <div class="tx-info">
                         <div class="tx-hash-small">${Utils.formatHash(tx.hash, 12)}</div>
                         <div class="tx-function-small">${action.function}</div>
@@ -739,7 +751,7 @@ const PageManager = {
                             }
 
                             return `
-                                <div class="transaction-item" onclick="SearchManager.showTransactionModal(${JSON.stringify(tx).replace(/"/g, '&quot;')})">
+                                <div class="transaction-item" onclick="PageManager.showPage('transaction', true, {txHash: '${tx.hash}'})">
                                     <div class="tx-main-info">
                                         <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
                                         <div class="tx-function">${action.function}</div>
@@ -1104,6 +1116,30 @@ const PageManager = {
         }
     },
 
+    async loadTransactionPage(params) {
+        if (!params || !params.txHash) {
+            this.showPage('home');
+            return;
+        }
+
+        try {
+            // Récupérer les données de la transaction depuis l'API
+            const txData = await API.getTransaction(params.txHash);
+            if (!txData) {
+                Utils.showToast('Transaction not found', 'error');
+                this.showPage('home');
+                return;
+            }
+
+            // Utiliser le système de modal existant pour les transactions
+            SearchManager.showTransactionModal(txData);
+        } catch (error) {
+            console.error('Error loading transaction page:', error);
+            Utils.showToast('Error loading transaction', 'error');
+            this.showPage('home');
+        }
+    },
+
     renderBlockDetails(block, container) {
         const html = `
             <div class="card">
@@ -1320,7 +1356,7 @@ const PageManager = {
             }
 
             return `
-                <div class="transaction-item" onclick="SearchManager.showTransactionModal(${JSON.stringify(tx).replace(/"/g, '&quot;')})">
+                <div class="transaction-item" onclick="PageManager.showPage('transaction', true, {txHash: '${tx.hash}'})">
                     <div class="tx-main-info">
                         <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
                         <div style="display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start;">
@@ -1498,7 +1534,7 @@ const BlockExplorer = {
             }
 
             return `
-                <div class="transaction-item-modal" onclick="SearchManager.showTransactionModal(${JSON.stringify(tx).replace(/"/g, '&quot;')})" style="
+                <div class="transaction-item-modal" onclick="PageManager.showPage('transaction', true, {txHash: '${tx.hash}'})" style="
                     padding: 1rem;
                     border: 1px solid rgba(255,255,255,0.1);
                     border-radius: 8px;
@@ -2014,8 +2050,8 @@ const ModalManager = {
 
         closeBtn.addEventListener('click', () => {
             modal.style.display = 'none';
-            // Si on est sur une page "block", retourner à la page précédente
-            if (AppState.currentPage === 'block') {
+            // Si on est sur une page "block" ou "transaction", retourner à la page précédente
+            if (AppState.currentPage === 'block' || AppState.currentPage === 'transaction') {
                 PageManager.showPage('home');
             }
         });
@@ -2023,8 +2059,8 @@ const ModalManager = {
         window.addEventListener('click', (e) => {
             if (e.target === modal) {
                 modal.style.display = 'none';
-                // Si on est sur une page "block", retourner à la page précédente
-                if (AppState.currentPage === 'block') {
+                // Si on est sur une page "block" ou "transaction", retourner à la page précédente
+                if (AppState.currentPage === 'block' || AppState.currentPage === 'transaction') {
                     PageManager.showPage('home');
                 }
             }
