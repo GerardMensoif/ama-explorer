@@ -196,7 +196,7 @@ const API = {
     // PFLOPS Historical Data
     async getPflopData() {
         try {
-            const response = await fetch('./pflops_data.json');
+            const response = await fetch('/pflops_data.json');
             const data = await response.json();
             return data;
         } catch (error) {
@@ -228,11 +228,15 @@ const PageManager = {
             });
         });
 
-        // Afficher la page d'accueil par défaut
-        this.showPage('home');
+        // Gérer les URLs au chargement
+        this.initUrlRouting();
+
+        // Afficher la page d'accueil par défaut ou parser l'URL actuelle
+        const urlData = this.parseUrl();
+        this.showPage(urlData.page, false, urlData.params);
     },
 
-    showPage(pageName) {
+    showPage(pageName, updateUrl = true, params = null) {
         // Cacher toutes les pages
         document.querySelectorAll('.page').forEach(page => {
             page.classList.remove('active');
@@ -252,12 +256,89 @@ const PageManager = {
             targetPage.classList.add('active');
             AppState.currentPage = pageName;
 
+            // Mettre à jour l'URL
+            if (updateUrl) {
+                this.updateUrl(pageName, params);
+            }
+
             // Charger les données de la page
-            this.loadPageData(pageName);
+            this.loadPageData(pageName, params);
         }
     },
 
-    async loadPageData(pageName) {
+    updateUrl(pageName, params = null) {
+        let url = '/';
+
+        switch (pageName) {
+            case 'address':
+                if (params && params.address) {
+                    url = `/address/${params.address}`;
+                }
+                break;
+            case 'block':
+                if (params && params.blockNumber) {
+                    url = `/block/${params.blockNumber}`;
+                }
+                break;
+            case 'home':
+                url = '/';
+                break;
+            default:
+                url = `/${pageName}`;
+                break;
+        }
+
+        history.pushState({ page: pageName, params }, '', url);
+    },
+
+    parseUrl() {
+        // Vérifier d'abord le hash pour les URLs de fallback
+        let path = window.location.pathname;
+        if (window.location.hash && window.location.hash.startsWith('#/')) {
+            path = window.location.hash.substring(1); // Enlever le #
+        }
+
+        const pathParts = path.split('/').filter(part => part);
+
+        if (pathParts.length === 0) {
+            return { page: 'home', params: null };
+        }
+
+        if (pathParts.length === 2) {
+            const [type, value] = pathParts;
+
+            if (type === 'address') {
+                AppState.currentAddress = value;
+                return { page: 'address', params: { address: value } };
+            }
+
+            if (type === 'block') {
+                return { page: 'block', params: { blockNumber: value } };
+            }
+        }
+
+        // Page simple (blocks, transactions, richlist, pflops)
+        if (['blocks', 'transactions', 'richlist', 'pflops'].includes(pathParts[0])) {
+            return { page: pathParts[0], params: null };
+        }
+
+        return { page: 'home', params: null };
+    },
+
+    initUrlRouting() {
+        // Gérer le bouton retour/avant du navigateur
+        window.addEventListener('popstate', (event) => {
+            if (event.state) {
+                this.showPage(event.state.page, false, event.state.params);
+            } else {
+                const urlData = this.parseUrl();
+                this.showPage(urlData.page, false, urlData.params);
+            }
+        });
+    },
+
+    async loadPageData(pageName, params = null) {
+        console.log('Loading page:', pageName, 'with params:', params);
         switch (pageName) {
             case 'home':
                 await this.loadHomePage();
@@ -273,6 +354,9 @@ const PageManager = {
                 break;
             case 'pflops':
                 await this.loadPflopPage();
+                break;
+            case 'block':
+                await this.loadBlockPage(params);
                 break;
             case 'address':
                 await this.loadAddressPage();
@@ -350,7 +434,7 @@ const PageManager = {
         const currentSlot = blocks.length > 0 ? blocks[0].header_unpacked.slot : null;
 
         const html = blocks.map((block, index) => `
-            <div class="block-item" onclick="BlockExplorer.showBlockDetailsFromData('${index}')">
+            <div class="block-item" onclick="PageManager.showPage('block', true, {blockNumber: '${block.header_unpacked.height}'})">
                 <div class="block-info">
                     <h4>Block #${block.header_unpacked.height}</h4>
                     <p class="text-truncate">${Utils.formatHash(block.hash, 12)}</p>
@@ -532,7 +616,7 @@ const PageManager = {
                 <div class="card-content">
                     <div class="blocks-list">
                         ${blocks.map((block, index) => `
-                            <div class="block-item" onclick="BlockExplorer.renderBlockModal(${JSON.stringify(block).replace(/"/g, '&quot;')})">
+                            <div class="block-item" onclick="PageManager.showPage('block', true, {blockNumber: '${block.header_unpacked.height}'})">
                                 <div class="block-info">
                                     <h4>Block #${block.header_unpacked.height}</h4>
                                     <p class="text-truncate">${Utils.formatHash(block.hash, 16)}</p>
@@ -986,6 +1070,79 @@ const PageManager = {
         });
     },
 
+    async loadBlockPage(params) {
+        if (!params || !params.blockNumber) {
+            this.showPage('home');
+            return;
+        }
+
+        const blockNumber = parseInt(params.blockNumber);
+        if (isNaN(blockNumber)) {
+            Utils.showToast('Invalid block number', 'error');
+            this.showPage('home');
+            return;
+        }
+
+        try {
+            // Charger les données du bloc
+            const blockData = await API.getBlocksByHeight(blockNumber);
+            if (!blockData || !blockData.entries || blockData.entries.length === 0) {
+                Utils.showToast('Block not found', 'error');
+                this.showPage('home');
+                return;
+            }
+
+            // Utiliser l'ancien système de modal mais pour cette page
+            const block = blockData.entries[0];
+            BlockExplorer.renderBlockModal(block);
+            document.getElementById('modal').style.display = 'block';
+
+        } catch (error) {
+            console.error('Error loading block page:', error);
+            Utils.showToast('Error loading block', 'error');
+            this.showPage('home');
+        }
+    },
+
+    renderBlockDetails(block, container) {
+        const html = `
+            <div class="card">
+                <div class="card-header">
+                    <h2><i class="fas fa-cube"></i> Block Information</h2>
+                </div>
+                <div class="card-content">
+                    <div class="block-details">
+                        <div class="detail-row">
+                            <span class="label">Height:</span>
+                            <span class="value">${block.header_unpacked.height}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="label">Hash:</span>
+                            <span class="value hash">${block.hash}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="label">Previous Hash:</span>
+                            <span class="value hash">${block.header_unpacked.previous_hash}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="label">Slot:</span>
+                            <span class="value">${block.header_unpacked.slot}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="label">Timestamp:</span>
+                            <span class="value">${new Date(block.header_unpacked.timestamp * 1000).toLocaleString()}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="label">Transactions:</span>
+                            <span class="value">${block.tx_count || 0}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.innerHTML = html;
+    },
+
     async loadAddressPage() {
         const address = AppState.currentAddress;
         if (!address) {
@@ -1384,7 +1541,7 @@ const BlockExplorer = {
         // Fonction pour naviguer vers la page d'une adresse
         AppState.currentAddress = address;
         document.getElementById('modal').style.display = 'none';
-        PageManager.showPage('address');
+        PageManager.showPage('address', true, { address: address });
     }
 };
 
@@ -1723,7 +1880,7 @@ const SearchManager = {
         try {
             // Naviguer vers la page adresse
             AppState.currentAddress = address;
-            PageManager.showPage('address');
+            PageManager.showPage('address', true, { address: address });
         } catch (error) {
             console.error('Erreur recherche adresse:', error);
             Utils.showToast('Error opening address page', 'error');
@@ -1857,11 +2014,19 @@ const ModalManager = {
 
         closeBtn.addEventListener('click', () => {
             modal.style.display = 'none';
+            // Si on est sur une page "block", retourner à la page précédente
+            if (AppState.currentPage === 'block') {
+                PageManager.showPage('home');
+            }
         });
 
         window.addEventListener('click', (e) => {
             if (e.target === modal) {
                 modal.style.display = 'none';
+                // Si on est sur une page "block", retourner à la page précédente
+                if (AppState.currentPage === 'block') {
+                    PageManager.showPage('home');
+                }
             }
         });
     }

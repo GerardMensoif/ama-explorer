@@ -4,15 +4,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Amadeus Explorer</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="/styles.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+    // Gérer les URLs directes après une erreur 404
+    if (window.location.pathname !== '/') {
+        const path = window.location.pathname;
+        const pathParts = path.split('/').filter(part => part);
+
+        if (pathParts.length === 2 && (pathParts[0] === 'address' || pathParts[0] === 'block')) {
+            // Rediriger vers la racine avec les paramètres dans le hash
+            window.location.href = '/#' + path;
+        }
+    }
+    </script>
 </head>
 <body>
     <nav class="navbar">
         <div class="nav-container">
             <div class="nav-brand">
-                <img src="logo.svg" alt="Amadeus" class="nav-logo" onclick="PageManager.showPage('home')" style="cursor: pointer;" title="Retour à l'accueil">
+                <img src="/logo.svg" alt="Amadeus" class="nav-logo" onclick="PageManager.showPage('home')" style="cursor: pointer;" title="Retour à l'accueil">
             </div>
             <div class="nav-menu">
                 <a href="#" class="nav-link active" data-page="home">Home</a>
@@ -229,6 +242,19 @@
             </div>
         </div>
 
+        <!-- Page d'un bloc -->
+        <div id="block" class="page">
+            <div class="page-header">
+                <h1 id="blockTitle">Block Details</h1>
+                <div class="page-controls">
+                    <button onclick="PageManager.showPage('home')">← Back to Home</button>
+                </div>
+            </div>
+            <div id="blockDetailsContainer">
+                <div class="loading">Loading block details...</div>
+            </div>
+        </div>
+
         <!-- Page d'une adresse -->
         <div id="address" class="page">
             <div class="page-header">
@@ -318,6 +344,6 @@
         </div>
     </footer>
 
-    <script src="script.js"></script>
+    <script src="/script.js"></script>
 </body>
 </html>
