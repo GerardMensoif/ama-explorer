@@ -1337,7 +1337,7 @@ const PageManager = {
                                     ${(entry.pk.startsWith('69TDon8KJ') || entry.pk.startsWith('6969GaCysicY')) ? '<span class="team-badge">Treasury</span>' : ''}
                                 </div>
                                 <div class="balance-col">
-                                    <span class="balance-amount">${Utils.formatNumber(balance)} AMA</span>
+                                    <span class="balance-amount">${Math.floor(balance).toLocaleString('en-US')} AMA</span>
                                 </div>
                                 <div class="percentage-col">
                                     <span class="percentage-amount">${percentage}%</span>
