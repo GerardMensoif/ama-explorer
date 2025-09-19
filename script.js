@@ -19,9 +19,9 @@ const AppState = {
 const Utils = {
     // Formatter les nombres
     formatNumber(num) {
-        if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
-        if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
-        if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
+        if (num >= 1e9) return Math.floor(num / 1e9) + 'B';
+        if (num >= 1e6) return Math.floor(num / 1e6) + 'M';
+        if (num >= 1e3) return Math.floor(num / 1e3) + 'K';
         return num.toString();
     },
 
@@ -32,41 +32,47 @@ const Utils = {
         return hash.substring(0, length) + '...' + hash.substring(hash.length - length);
     },
 
-    // Formatter le temps relatif basé sur les slots
+    // Formatter le temps relatif basé sur les slots (2 blocs par seconde)
     formatTimeAgo(slot, currentSlot = null) {
         if (!slot) return '-';
 
         // Si on a le slot actuel, calculer la différence en slots
         if (currentSlot) {
             const slotDiff = currentSlot - slot;
-            const minutesAgo = Math.floor(slotDiff * 0.5 / 60); // 0.5 sec par slot
+            const secondsAgo = Math.floor(slotDiff * 0.5); // 0.5 sec par slot (2 blocs/sec)
+            const minutesAgo = Math.floor(secondsAgo / 60);
             const hoursAgo = Math.floor(minutesAgo / 60);
             const daysAgo = Math.floor(hoursAgo / 24);
 
-            if (daysAgo > 0) return `il y a ${daysAgo}j`;
-            if (hoursAgo > 0) return `il y a ${hoursAgo}h`;
-            if (minutesAgo > 0) return `il y a ${minutesAgo}min`;
+            if (daysAgo > 0) return `${daysAgo}d ago`;
+            if (hoursAgo > 0) return `${hoursAgo}h ago`;
+            if (minutesAgo > 0) return `${minutesAgo}m ago`;
+            if (secondsAgo >= 1) return `${secondsAgo}s ago`;
             return 'now';
         }
 
-        // Fallback: juste afficher le slot
-        return `Slot ${slot}`;
+        // Fallback: estimation approximative basée sur l'âge du slot
+        // Approximation: slots récents = now, anciens = temps relatif
+        return 'now';
     },
 
     // Convertir un slot en timestamp approximatif
     slotToTimestamp(slot) {
         if (!slot) return null;
 
-        // Calibration basée sur une transaction connue:
-        // Slot 29806536 = Sep 17, 2025 20:41:58 (selon wallet team)
-        const referenceSlot = 29806536;
-        const referenceTimestamp = new Date('2025-09-17T20:41:58').getTime();
+        // Calibration mise à jour: utiliser le timestamp actuel comme référence
+        // Approximativement: 1 slot = 0.5 secondes
+        const now = Date.now();
 
-        // Calcul basé sur 0.5 seconde par slot
-        const slotDiff = slot - referenceSlot;
-        const timestampDiff = slotDiff * 500; // 0.5 sec = 500ms per slot
+        // Estimation grossière: slot actuel approximatif basé sur le temps
+        // Cette estimation sera corrigée dynamiquement avec les vraies données
+        const estimatedCurrentSlot = slot + Math.floor((now - (slot * 500)) / 500);
 
-        return referenceTimestamp + timestampDiff;
+        // Calcul simple: chaque slot = 0.5 seconde
+        const slotAge = estimatedCurrentSlot - slot;
+        const ageInMs = slotAge * 500;
+
+        return now - ageInMs;
     },
 
     // Formatter une date à partir d'un slot
@@ -87,6 +93,38 @@ const Utils = {
         });
     },
 
+    // Formatter le temps relatif à partir d'un slot avec slot actuel
+    formatTimeFromSlot(block, currentSlot = null) {
+        // Priorité 1: utiliser le timestamp si disponible
+        if (block.header_unpacked && block.header_unpacked.timestamp) {
+            const now = Date.now();
+            const blockTime = block.header_unpacked.timestamp * 1000;
+            const diff = now - blockTime;
+
+            const seconds = Math.floor(diff / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const hours = Math.floor(minutes / 60);
+            const days = Math.floor(hours / 24);
+
+            if (days > 0) return `il y a ${days}j`;
+            if (hours > 0) return `il y a ${hours}h`;
+            if (minutes > 0) return `il y a ${minutes}min`;
+            if (seconds > 30) return `il y a ${seconds}s`;
+            return 'now';
+        }
+
+        // Priorité 2: utiliser le slot avec le slot actuel si disponible
+        if (block.header_unpacked && block.header_unpacked.slot && currentSlot) {
+            return this.formatTimeAgo(block.header_unpacked.slot, currentSlot);
+        }
+
+        // Priorité 3: utiliser juste le slot
+        if (block.header_unpacked && block.header_unpacked.slot) {
+            return this.formatTimeAgo(block.header_unpacked.slot);
+        }
+
+        return '-';
+    },
 
     // Copier dans le presse-papier
     async copyToClipboard(text) {
@@ -400,8 +438,9 @@ const PageManager = {
         // Calculer l'epoch basé sur la hauteur (100,000 blocks par epoch)
         const currentEpoch = Math.floor((stats.height || 0) / 100000);
         document.getElementById('currentEpoch').textContent = currentEpoch;
-        document.getElementById('circulatingSupply').textContent = `${Utils.formatNumber(stats.circulating || 0)} AMA`;
+        document.getElementById('circulatingSupply').textContent = `${Utils.formatNumber(stats.circulating || 0)}`;
         document.getElementById('pflopsStat').textContent = (stats.pflops || 0).toFixed(2);
+        document.getElementById('tpsStat').textContent = (stats.txs_per_sec || 0).toFixed(1);
 
         AppState.stats = stats;
     },
@@ -428,13 +467,13 @@ const PageManager = {
                 }
             }
 
-            this.renderLatestBlocks(blocks.slice(0, 10));
+            await this.renderLatestBlocks(blocks.slice(0, 10));
         } catch (error) {
             console.error('Error loading latest blocks:', error);
         }
     },
 
-    renderLatestBlocks(blocks) {
+    async renderLatestBlocks(blocks) {
         const container = document.getElementById('latestBlocks');
 
         if (!blocks || blocks.length === 0) {
@@ -442,8 +481,18 @@ const PageManager = {
             return;
         }
 
-        // Utiliser le slot le plus récent comme référence
-        const currentSlot = blocks.length > 0 ? blocks[0].header_unpacked.slot : null;
+        // Obtenir le slot actuel depuis les stats ou le premier bloc
+        let currentSlot = null;
+        try {
+            if (AppState.stats && AppState.stats.slot) {
+                currentSlot = AppState.stats.slot;
+            } else if (blocks.length > 0 && blocks[0].header_unpacked && blocks[0].header_unpacked.slot) {
+                // Utiliser le slot du premier bloc (le plus récent) comme référence
+                currentSlot = blocks[0].header_unpacked.slot;
+            }
+        } catch (error) {
+            console.warn('Could not get current slot:', error);
+        }
 
         const html = blocks.map((block, index) => `
             <div class="block-item" onclick="PageManager.showPage('block', true, {blockNumber: '${block.header_unpacked.height}'})">
@@ -453,7 +502,7 @@ const PageManager = {
                 </div>
                 <div class="block-meta">
                     <div class="tx-count">${block.tx_count || 0} txs</div>
-                    <div class="time">${Utils.formatTimeAgo(block.header_unpacked.slot, currentSlot)}</div>
+                    <div class="time">${Utils.formatTimeFromSlot(block, currentSlot)}</div>
                 </div>
             </div>
         `).join('');
@@ -2074,10 +2123,28 @@ document.addEventListener('DOMContentLoaded', () => {
     SearchManager.init();
     ModalManager.init();
 
-    // Rafraîchissement automatique toutes les 30 secondes
+    // Rafraîchissement automatique toutes les 30 secondes pour la page complète
     setInterval(() => {
         if (AppState.currentPage === 'home') {
             PageManager.loadHomePage();
         }
     }, 30000);
+
+    // Rafraîchissement des Latest Blocks toutes les 10 secondes
+    setInterval(async () => {
+        if (AppState.currentPage === 'home') {
+            try {
+                // Charger seulement les stats pour avoir le slot actuel
+                const stats = await API.getStats();
+                if (stats) {
+                    AppState.stats = stats.stats;
+                }
+
+                // Charger seulement les derniers blocs
+                await PageManager.loadLatestBlocks();
+            } catch (error) {
+                console.error('Error refreshing latest blocks:', error);
+            }
+        }
+    }, 10000);
 });

@@ -439,6 +439,17 @@ body {
     font-size: 0.9rem;
 }
 
+.footer-content a {
+    color: rgb(24, 255, 178);
+    text-decoration: none;
+    transition: all 0.3s ease;
+}
+
+.footer-content a:hover {
+    color: #00d4ff;
+    text-decoration: underline;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .nav-container {
