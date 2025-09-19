@@ -60,19 +60,15 @@ const Utils = {
     slotToTimestamp(slot) {
         if (!slot) return null;
 
-        // Calibration mise à jour: utiliser le timestamp actuel comme référence
-        // Approximativement: 1 slot = 0.5 secondes
-        const now = Date.now();
+        // Référence fixe calibrée: 19 septembre 2025 20:00:00
+        const referenceSlot = 30116000;
+        const referenceTimestamp = new Date('2025-09-19T20:00:00').getTime();
 
-        // Estimation grossière: slot actuel approximatif basé sur le temps
-        // Cette estimation sera corrigée dynamiquement avec les vraies données
-        const estimatedCurrentSlot = slot + Math.floor((now - (slot * 500)) / 500);
+        // Calcul basé sur 0.5 seconde par slot (2 blocs/sec)
+        const slotDiff = slot - referenceSlot;
+        const timeDiff = slotDiff * 500; // 500ms par slot
 
-        // Calcul simple: chaque slot = 0.5 seconde
-        const slotAge = estimatedCurrentSlot - slot;
-        const ageInMs = slotAge * 500;
-
-        return now - ageInMs;
+        return referenceTimestamp + timeDiff;
     },
 
     // Formatter une date à partir d'un slot
