@@ -125,10 +125,23 @@ const Utils = {
     // Copier dans le presse-papier
     async copyToClipboard(text) {
         try {
-            await navigator.clipboard.writeText(text);
-            this.showToast('Copied to clipboard!');
+            // Méthode moderne (HTTPS uniquement)
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+                this.showToast('Copied to clipboard!');
+            } else {
+                // Fallback pour HTTP
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                this.showToast('Copied to clipboard!');
+            }
         } catch (err) {
             console.error('Copy error:', err);
+            this.showToast('Failed to copy', 'error');
         }
     },
 
@@ -230,7 +243,11 @@ const API = {
     // PFLOPS Historical Data
     async getPflopData() {
         try {
-            const response = await fetch('/pflops_data.json');
+            // Ajouter un timestamp pour éviter le cache
+            const timestamp = Date.now();
+            const response = await fetch(`/pflops_data.json?t=${timestamp}`, {
+                cache: 'no-cache'
+            });
             const data = await response.json();
             return data;
         } catch (error) {
@@ -578,7 +595,7 @@ const PageManager = {
             }
 
             return `
-                <div class="transaction-item-small" onclick="PageManager.showPage('transaction', true, {txHash: '${tx.hash}'})">
+                <div class="transaction-item-small" onclick="SearchManager.showTransactionFromHash('${tx.hash}')">
                     <div class="tx-info">
                         <div class="tx-hash-small">${Utils.formatHash(tx.hash, 12)}</div>
                         <div class="tx-function-small">${action.function}</div>
@@ -796,7 +813,7 @@ const PageManager = {
                             }
 
                             return `
-                                <div class="transaction-item" onclick="PageManager.showPage('transaction', true, {txHash: '${tx.hash}'})">
+                                <div class="transaction-item" onclick="SearchManager.showTransactionFromHash('${tx.hash}')">
                                     <div class="tx-main-info">
                                         <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
                                         <div class="tx-function">${action.function}</div>
@@ -917,6 +934,9 @@ const PageManager = {
             this.initTpsChart(pflopData);
             console.log('TPS chart initialized');
 
+            // Reset time filter buttons to default (24h)
+            this.resetTimeFilters();
+
             // Initialize time filters
             this.initTimeFilters(pflopData);
 
@@ -1023,20 +1043,6 @@ const PageManager = {
                         bodyColor: '#ffffff',
                         borderColor: 'rgb(24, 255, 178)',
                         borderWidth: 1,
-                        filter: function(tooltipItem) {
-                            // Show tooltip only every 10 minutes (600 seconds)
-                            if (!tooltipItem) return false;
-                            const index = tooltipItem.dataIndex;
-                            if (!PageManager.chartTimestamps || !PageManager.chartTimestamps[index]) return true;
-
-                            const timestamp = PageManager.chartTimestamps[index];
-                            const date = new Date(timestamp);
-                            const minutes = date.getMinutes();
-                            const seconds = date.getSeconds();
-
-                            // Show tooltip only if minutes is 0, 10, 20, 30, 40, or 50 and seconds < 30
-                            return (minutes % 10 === 0) && seconds < 30;
-                        },
                         callbacks: {
                             title: function(context) {
                                 if (!context || !context[0]) return '';
@@ -1156,20 +1162,6 @@ const PageManager = {
                         bodyColor: '#ffffff',
                         borderColor: 'rgb(255, 193, 7)',
                         borderWidth: 1,
-                        filter: function(tooltipItem) {
-                            // Show tooltip only every 10 minutes (600 seconds)
-                            if (!tooltipItem) return false;
-                            const index = tooltipItem.dataIndex;
-                            if (!PageManager.chartTimestamps || !PageManager.chartTimestamps[index]) return true;
-
-                            const timestamp = PageManager.chartTimestamps[index];
-                            const date = new Date(timestamp);
-                            const minutes = date.getMinutes();
-                            const seconds = date.getSeconds();
-
-                            // Show tooltip only if minutes is 0, 10, 20, 30, 40, or 50 and seconds < 30
-                            return (minutes % 10 === 0) && seconds < 30;
-                        },
                         callbacks: {
                             title: function(context) {
                                 if (!context || !context[0]) return '';
@@ -1324,6 +1316,16 @@ const PageManager = {
             timestamps: chartEntries.map(entry => entry.timestamp),
             heights: chartEntries.map(entry => entry.height || null)
         };
+    },
+
+    resetTimeFilters() {
+        const filters = document.querySelectorAll('.time-filter');
+        filters.forEach(filter => {
+            filter.classList.remove('active');
+            if (filter.dataset.period === '24h') {
+                filter.classList.add('active');
+            }
+        });
     },
 
     initTimeFilters(data) {
@@ -1664,7 +1666,7 @@ const PageManager = {
             }
 
             return `
-                <div class="transaction-item" onclick="PageManager.showPage('transaction', true, {txHash: '${tx.hash}'})">
+                <div class="transaction-item" onclick="SearchManager.showTransactionFromHash('${tx.hash}')">
                     <div class="tx-main-info">
                         <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
                         <div style="display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start;">
@@ -1842,7 +1844,7 @@ const BlockExplorer = {
             }
 
             return `
-                <div class="transaction-item-modal" onclick="PageManager.showPage('transaction', true, {txHash: '${tx.hash}'})" style="
+                <div class="transaction-item-modal" onclick="SearchManager.showTransactionFromHash('${tx.hash}')" style="
                     padding: 1rem;
                     border: 1px solid rgba(255,255,255,0.1);
                     border-radius: 8px;
@@ -2247,6 +2249,41 @@ const SearchManager = {
         }
     },
 
+    async showTransactionFromHash(hash) {
+        try {
+            const txData = await API.getTransaction(hash);
+            if (txData) {
+                this.showTransactionModal(txData);
+            } else {
+                Utils.showToast('Transaction not found', 'error');
+            }
+        } catch (error) {
+            console.error('Error loading transaction:', error);
+            Utils.showToast('Error loading transaction', 'error');
+        }
+    },
+
+    goToTransactionPage(txHash) {
+        // Fermer le modal d'abord
+        const modal = document.getElementById('modal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+        // Puis naviguer vers la page transaction
+        PageManager.showPage('transaction', true, {txHash: txHash});
+    },
+
+    goToBlockBySlot(slot) {
+        // Fermer le modal d'abord
+        const modal = document.getElementById('modal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+        // Utiliser le slot comme numéro de bloc
+        PageManager.showPage('block', true, {blockNumber: slot.toString()});
+    },
+
+
     showTransactionModal(tx) {
         const modalBody = document.getElementById('modalBody');
         const action = tx.tx.actions[0];
@@ -2305,13 +2342,12 @@ const SearchManager = {
             ${transferInfo}
             <div style="margin: 2rem 0;">
                 <div style="display: grid; gap: 1rem;">
-                    <div><strong>Hash:</strong> <span onclick="Utils.copyToClipboard('${tx.hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour copier">${tx.hash}</span></div>
+                    <div><strong>Hash:</strong> <span onclick="SearchManager.goToTransactionPage('${tx.hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour aller à la page de la transaction">${tx.hash}</span></div>
                     ${!isTransfer ? `<div><strong>Signer:</strong> <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 16)}</span></div>` : ''}
                     <div><strong>Nonce:</strong> ${tx.tx.nonce}</div>
                     <div><strong>Contract:</strong> ${action.contract}</div>
                     <div><strong>Function:</strong> ${action.function}</div>
-                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="Utils.copyToClipboard('${tx.metadata.entry_hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour copier">${Utils.formatHash(tx.metadata.entry_hash, 16)}</span></div>` : ''}
-                    ${tx.metadata ? `<div><strong>Slot:</strong> ${tx.metadata.entry_slot}</div>` : ''}
+                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="SearchManager.goToBlockBySlot(${tx.metadata.entry_slot})" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour voir les détails du bloc">${tx.metadata.entry_slot}</span></div>` : ''}
                 </div>
             </div>
 
