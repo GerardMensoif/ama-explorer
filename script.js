@@ -595,7 +595,7 @@ const PageManager = {
 
     async loadBlocksPage() {
         const container = document.getElementById('blocksContainer');
-        container.innerHTML = '<div class="loading">Loading latest 50 blocks...</div>';
+        container.innerHTML = '<div class="loading">Loading latest 20 blocks...</div>';
 
         try {
             if (!AppState.stats || !AppState.stats.height) {
@@ -620,8 +620,8 @@ const PageManager = {
             const currentHeight = AppState.stats.height;
             const blocks = [];
 
-            // Charger les 50 derniers blocks
-            for (let i = 0; i < 50; i++) {
+            // Charger les 20 derniers blocks
+            for (let i = 0; i < 20; i++) {
                 const height = currentHeight - i;
                 if (height < 0) break;
 
@@ -668,7 +668,7 @@ const PageManager = {
         const html = `
             <div class="card">
                 <div class="card-header">
-                    <h2><i class="fas fa-cubes"></i> Latest 50 Blocks</h2>
+                    <h2><i class="fas fa-cubes"></i> Latest 20 Blocks</h2>
                 </div>
                 <div class="card-content">
                     <div class="blocks-list">
@@ -694,7 +694,7 @@ const PageManager = {
 
     async loadTransactionsPage() {
         const container = document.getElementById('transactionsContainer');
-        container.innerHTML = '<div class="loading">Loading latest 50 transactions...</div>';
+        container.innerHTML = '<div class="loading">Loading latest 20 transactions...</div>';
 
         try {
             if (!AppState.stats || !AppState.stats.height) {
@@ -720,7 +720,7 @@ const PageManager = {
             let allTransactions = [];
 
             // Charger les transactions des derniers blocks
-            for (let i = 0; i < 20 && allTransactions.length < 50; i++) {
+            for (let i = 0; i < 15 && allTransactions.length < 20; i++) {
                 const height = currentHeight - i;
                 if (height < 0) break;
 
@@ -734,7 +734,7 @@ const PageManager = {
                                 if (txsData.txs) {
                                     allTransactions.push(...txsData.txs);
                                 }
-                                if (allTransactions.length >= 50) break;
+                                if (allTransactions.length >= 20) break;
                             }
                         }
                     }
@@ -773,7 +773,7 @@ const PageManager = {
         const html = `
             <div class="card">
                 <div class="card-header">
-                    <h2><i class="fas fa-exchange-alt"></i> Latest 50 Transactions</h2>
+                    <h2><i class="fas fa-exchange-alt"></i> Latest 20 Transactions</h2>
                 </div>
                 <div class="card-content">
                     <div class="transactions-list">
@@ -1257,6 +1257,30 @@ const PageManager = {
         // Bouton copier adresse
         document.getElementById('copyAddressBtn').onclick = () => {
             Utils.copyToClipboard(address);
+        };
+
+        // Bouton refresh
+        document.getElementById('refreshAddressBtn').onclick = async () => {
+            try {
+                // Reset cursor and reload all address data
+                AppState.currentAddressData.cursor = null;
+                AppState.currentAddressData.transactions = [];
+
+                const typeFilter = document.getElementById('txTypeFilter');
+                const limitFilter = document.getElementById('txLimitFilter');
+
+                // Reload balances
+                const balanceData = await API.getAllBalances(address);
+                this.renderAddressBalances(balanceData.balances || []);
+
+                // Reload transactions
+                await this.loadAddressTransactions(address, typeFilter.value, parseInt(limitFilter.value));
+
+                Utils.showToast('Address data refreshed', 'success');
+            } catch (error) {
+                console.error('Error refreshing address data:', error);
+                Utils.showToast('Error refreshing data', 'error');
+            }
         };
 
         // Filtres de transactions

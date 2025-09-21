@@ -1081,3 +1081,35 @@ body {
         height: 300px !important;
     }
 }
+
+/* Transaction filters refresh button */
+.transaction-filters {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.transaction-filters select {
+    padding: 0.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.transaction-filters button {
+    padding: 0.5rem 1rem;
+    background: linear-gradient(45deg, rgb(24, 255, 178), #0099cc);
+    border: none;
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.9rem;
+}
+
+.transaction-filters button:hover {
+    transform: translateY(-2px);
+}
