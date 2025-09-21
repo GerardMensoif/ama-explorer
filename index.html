@@ -32,7 +32,7 @@
                 <a href="#" class="nav-link" data-page="blocks">Blocks</a>
                 <a href="#" class="nav-link" data-page="transactions">Transactions</a>
                 <a href="#" class="nav-link" data-page="richlist">Rich List</a>
-                <a href="#" class="nav-link" data-page="pflops">PFLOPS Chart</a>
+                <a href="#" class="nav-link" data-page="pflops">Charts</a>
                 <a href="#" class="nav-link" data-page="address" style="display: none;">Address</a>
             </div>
         </div>
@@ -202,10 +202,10 @@
             </div>
         </div>
 
-        <!-- Page PFLOPS Chart -->
+        <!-- Page Charts -->
         <div id="pflops" class="page">
             <div class="page-header">
-                <h1>PFLOPS Historical Chart</h1>
+                <h1>Performance Charts</h1>
                 <div class="page-info">
                     <p>Historical performance data of the Amadeus network</p>
                 </div>
@@ -234,8 +234,8 @@
                     <span class="stat-value" id="peakPflops24h">-</span>
                 </div>
                 <div class="stat-item">
-                    <span class="stat-label">Total Entries:</span>
-                    <span class="stat-value" id="totalEntries">-</span>
+                    <span class="stat-label">Current TPS:</span>
+                    <span class="stat-value" id="currentTps">-</span>
                 </div>
             </div>
 
@@ -247,6 +247,18 @@
                     <div id="pflopschartContainer">
                         <canvas id="pflopsChart" width="800" height="400"></canvas>
                         <div id="chartLoading" class="loading">Loading chart data...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 2rem;">
+                <div class="card-header">
+                    <h2><i class="fas fa-bolt"></i> Transactions per Second Over Time</h2>
+                </div>
+                <div class="card-content">
+                    <div id="tpschartContainer">
+                        <canvas id="tpsChart" width="800" height="400"></canvas>
+                        <div id="tpsChartLoading" class="loading">Loading TPS chart data...</div>
                     </div>
                 </div>
             </div>

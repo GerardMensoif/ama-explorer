@@ -868,15 +868,22 @@ const PageManager = {
     },
 
     async loadPflopPage() {
+        console.log('Loading PFLOPS page...');
         const chartContainer = document.getElementById('pflopschartContainer');
         const chartLoading = document.getElementById('chartLoading');
+        const tpsChartContainer = document.getElementById('tpschartContainer');
+        const tpsChartLoading = document.getElementById('tpsChartLoading');
 
         try {
-            chartLoading.style.display = 'block';
+            if (chartLoading) chartLoading.style.display = 'block';
+            if (tpsChartLoading) tpsChartLoading.style.display = 'block';
 
             // Get PFLOPS data
+            console.log('Fetching PFLOPS data...');
             const data = await API.getPflopData();
+            console.log('PFLOPS data received:', data);
             const pflopData = data.data || [];
+            console.log('PFLOPS data array:', pflopData.length, 'entries');
 
             if (pflopData.length === 0) {
                 chartContainer.innerHTML = `
@@ -887,23 +894,39 @@ const PageManager = {
                         </div>
                     </div>
                 `;
+                tpsChartContainer.innerHTML = `
+                    <div class="card">
+                        <div class="card-content">
+                            <p>No TPS data available yet.</p>
+                        </div>
+                    </div>
+                `;
                 return;
             }
 
             // Update statistics
             this.updatePflopStats(pflopData);
 
-            // Initialize chart
+            // Initialize PFLOPS chart
+            console.log('Initializing PFLOPS chart...');
             this.initPflopChart(pflopData);
+            console.log('PFLOPS chart initialized');
+
+            // Initialize TPS chart
+            console.log('Initializing TPS chart...');
+            this.initTpsChart(pflopData);
+            console.log('TPS chart initialized');
 
             // Initialize time filters
             this.initTimeFilters(pflopData);
 
-            chartLoading.style.display = 'none';
+            if (chartLoading) chartLoading.style.display = 'none';
+            if (tpsChartLoading) tpsChartLoading.style.display = 'none';
 
         } catch (error) {
             console.error('Error loading PFLOPS page:', error);
-            chartLoading.style.display = 'none';
+            if (chartLoading) chartLoading.style.display = 'none';
+            if (tpsChartLoading) tpsChartLoading.style.display = 'none';
             chartContainer.innerHTML = `
                 <div class="card">
                     <div class="card-content">
@@ -911,20 +934,31 @@ const PageManager = {
                     </div>
                 </div>
             `;
+            tpsChartContainer.innerHTML = `
+                <div class="card">
+                    <div class="card-content">
+                        <p>Error loading TPS data. Please try again later.</p>
+                    </div>
+                </div>
+            `;
         }
     },
 
     updatePflopStats(data) {
+        console.log('Updating PFLOP stats with', data.length, 'entries');
         const currentPflops = document.getElementById('currentPflops');
         const avgPflops24h = document.getElementById('avgPflops24h');
         const peakPflops24h = document.getElementById('peakPflops24h');
-        const totalEntries = document.getElementById('totalEntries');
+        const currentTps = document.getElementById('currentTps');
 
         if (data.length === 0) return;
 
-        // Current PFLOPS
+        // Current PFLOPS and TPS
         const latest = data[data.length - 1];
+        console.log('Latest entry:', latest);
         currentPflops.textContent = latest.pflops.toFixed(2);
+        currentTps.textContent = (latest.txs_per_sec || 0).toFixed(1);
+        console.log('Set TPS to:', latest.txs_per_sec || 0);
 
         // Last 24h data
         const now = Date.now();
@@ -941,21 +975,24 @@ const PageManager = {
             peakPflops24h.textContent = '-';
         }
 
-        totalEntries.textContent = data.length.toString();
     },
 
     initPflopChart(data) {
+        console.log('initPflopChart called with data:', data.length, 'entries');
         const ctx = document.getElementById('pflopsChart').getContext('2d');
 
         // Store chart instance for later updates
-        if (window.pflopChart) {
+        if (window.pflopChart && typeof window.pflopChart.destroy === 'function') {
             window.pflopChart.destroy();
         }
 
-        const chartData = this.processChartData(data, 'all');
+        console.log('Processing chart data...');
+        const chartData = this.processChartData(data, '24h');
+        console.log('Chart data processed:', chartData);
 
-        // Store timestamps for tooltips
+        // Store timestamps and heights for tooltips
         this.chartTimestamps = chartData.timestamps;
+        this.chartHeights = chartData.heights;
 
         window.pflopChart = new Chart(ctx, {
             type: 'line',
@@ -986,8 +1023,23 @@ const PageManager = {
                         bodyColor: '#ffffff',
                         borderColor: 'rgb(24, 255, 178)',
                         borderWidth: 1,
+                        filter: function(tooltipItem) {
+                            // Show tooltip only every 10 minutes (600 seconds)
+                            if (!tooltipItem) return false;
+                            const index = tooltipItem.dataIndex;
+                            if (!PageManager.chartTimestamps || !PageManager.chartTimestamps[index]) return true;
+
+                            const timestamp = PageManager.chartTimestamps[index];
+                            const date = new Date(timestamp);
+                            const minutes = date.getMinutes();
+                            const seconds = date.getSeconds();
+
+                            // Show tooltip only if minutes is 0, 10, 20, 30, 40, or 50 and seconds < 30
+                            return (minutes % 10 === 0) && seconds < 30;
+                        },
                         callbacks: {
                             title: function(context) {
+                                if (!context || !context[0]) return '';
                                 const index = context[0].dataIndex;
                                 if (PageManager.chartTimestamps && PageManager.chartTimestamps[index]) {
                                     const date = new Date(PageManager.chartTimestamps[index]);
@@ -999,10 +1051,16 @@ const PageManager = {
                                         second: '2-digit'
                                     });
                                 }
-                                return context[0].label;
+                                return context[0].label || '';
                             },
                             label: function(context) {
-                                return `PFLOPS: ${context.parsed.y.toFixed(2)}`;
+                                if (!context) return '';
+                                const index = context.dataIndex;
+                                const pflops = `PFLOPS: ${context.parsed.y.toFixed(2)}`;
+                                const height = PageManager.chartHeights && PageManager.chartHeights[index]
+                                    ? `Block: ${PageManager.chartHeights[index].toLocaleString()}`
+                                    : 'Block: N/A';
+                                return [pflops, height];
                             }
                         }
                     }
@@ -1024,8 +1082,9 @@ const PageManager = {
                         },
                         ticks: {
                             color: '#b3b3b3',
+                            stepSize: 5,
                             callback: function(value) {
-                                return value.toFixed(2);
+                                return value.toFixed(0);
                             }
                         },
                         // Ajuster l'échelle Y pour mieux voir les variations
@@ -1040,17 +1099,128 @@ const PageManager = {
                             }
                             return undefined;
                         },
-                        max: function(context) {
-                            const data = context.chart.data.datasets[0].data;
-                            if (data && data.length > 0) {
-                                const values = data.map(point => point.y);
-                                const min = Math.min(...values);
-                                const max = Math.max(...values);
-                                const range = max - min;
-                                return range > 0.1 ? max + range * 0.1 : max + 0.1;
+                        grace: '5%'
+                    }
+                },
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                }
+            }
+        });
+    },
+
+    initTpsChart(data) {
+        console.log('initTpsChart called with data:', data.length, 'entries');
+        const ctx = document.getElementById('tpsChart').getContext('2d');
+
+        // Store chart instance for later updates
+        if (window.tpsChart && typeof window.tpsChart.destroy === 'function') {
+            window.tpsChart.destroy();
+        }
+
+        console.log('Processing TPS chart data...');
+        const chartData = this.processTpsChartData(data, '24h');
+        console.log('TPS chart data processed:', chartData);
+
+        // Store timestamps and heights for tooltips (reuse same variables as PFLOPS)
+        this.chartTimestamps = chartData.timestamps;
+        this.chartHeights = chartData.heights;
+
+        window.tpsChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: chartData.labels,
+                datasets: [{
+                    label: 'TPS',
+                    data: chartData.values,
+                    borderColor: 'rgb(255, 193, 7)',
+                    backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 2,
+                    pointHoverRadius: 5,
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(20, 20, 40, 0.95)',
+                        titleColor: 'rgb(255, 193, 7)',
+                        bodyColor: '#ffffff',
+                        borderColor: 'rgb(255, 193, 7)',
+                        borderWidth: 1,
+                        filter: function(tooltipItem) {
+                            // Show tooltip only every 10 minutes (600 seconds)
+                            if (!tooltipItem) return false;
+                            const index = tooltipItem.dataIndex;
+                            if (!PageManager.chartTimestamps || !PageManager.chartTimestamps[index]) return true;
+
+                            const timestamp = PageManager.chartTimestamps[index];
+                            const date = new Date(timestamp);
+                            const minutes = date.getMinutes();
+                            const seconds = date.getSeconds();
+
+                            // Show tooltip only if minutes is 0, 10, 20, 30, 40, or 50 and seconds < 30
+                            return (minutes % 10 === 0) && seconds < 30;
+                        },
+                        callbacks: {
+                            title: function(context) {
+                                if (!context || !context[0]) return '';
+                                const index = context[0].dataIndex;
+                                if (PageManager.chartTimestamps && PageManager.chartTimestamps[index]) {
+                                    const date = new Date(PageManager.chartTimestamps[index]);
+                                    return date.toLocaleString('en-US', {
+                                        month: 'short',
+                                        day: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        second: '2-digit'
+                                    });
+                                }
+                                return context[0].label || '';
+                            },
+                            label: function(context) {
+                                if (!context) return '';
+                                const index = context.dataIndex;
+                                const tps = `TPS: ${context.parsed.y.toFixed(1)}`;
+                                const height = PageManager.chartHeights && PageManager.chartHeights[index]
+                                    ? `Block: ${PageManager.chartHeights[index].toLocaleString()}`
+                                    : 'Block: N/A';
+                                return [tps, height];
                             }
-                            return undefined;
                         }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#b3b3b3',
+                            maxTicksLimit: 8
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#b3b3b3',
+                            stepSize: 5,
+                            callback: function(value) {
+                                return value.toFixed(0);
+                            }
+                        },
+                        grace: '10%'
                     }
                 },
                 interaction: {
@@ -1102,7 +1272,57 @@ const PageManager = {
                 }
             }),
             values: filtered.map(entry => entry.pflops),
-            timestamps: filtered.map(entry => entry.timestamp)
+            timestamps: filtered.map(entry => entry.timestamp),
+            heights: filtered.map(entry => entry.height || null)
+        };
+    },
+
+    processTpsChartData(data, period) {
+        const now = Date.now();
+        let filtered = data;
+
+        // Filter by time period
+        switch (period) {
+            case '24h':
+                filtered = data.filter(entry => now - entry.timestamp <= 24 * 60 * 60 * 1000);
+                break;
+            case '7d':
+                filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
+                break;
+            case '30d':
+                filtered = data.filter(entry => now - entry.timestamp <= 30 * 24 * 60 * 60 * 1000);
+                break;
+            case 'all':
+            default:
+                filtered = data;
+                break;
+        }
+
+        // Always use filtered data but ensure TPS values exist
+        const chartEntries = filtered;
+
+        return {
+            labels: chartEntries.map(entry => {
+                const date = new Date(entry.timestamp);
+                const now = new Date();
+                const diffHours = (now - date) / (1000 * 60 * 60);
+
+                if (diffHours < 24) {
+                    return date.toLocaleTimeString('en-US', {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                } else {
+                    return date.toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit'
+                    });
+                }
+            }),
+            values: chartEntries.map(entry => entry.txs_per_sec || 0),
+            timestamps: chartEntries.map(entry => entry.timestamp),
+            heights: chartEntries.map(entry => entry.height || null)
         };
     },
 
@@ -1114,14 +1334,33 @@ const PageManager = {
                 filters.forEach(f => f.classList.remove('active'));
                 e.target.classList.add('active');
 
-                // Update chart
+                // Update both charts
                 const period = e.target.dataset.period;
-                const chartData = this.processChartData(data, period);
+                console.log('Updating charts for period:', period);
+                const pflopChartData = this.processChartData(data, period);
+                const tpsChartData = this.processTpsChartData(data, period);
 
-                if (window.pflopChart) {
-                    window.pflopChart.data.labels = chartData.labels;
-                    window.pflopChart.data.datasets[0].data = chartData.values;
+                console.log('PFLOP chart data:', pflopChartData);
+                console.log('TPS chart data:', tpsChartData);
+
+                // Update stored data for tooltips
+                this.chartTimestamps = pflopChartData.timestamps;
+                this.chartHeights = pflopChartData.heights;
+
+                if (window.pflopChart && pflopChartData.labels.length > 0) {
+                    window.pflopChart.data.labels = pflopChartData.labels;
+                    window.pflopChart.data.datasets[0].data = pflopChartData.values;
                     window.pflopChart.update();
+                } else {
+                    console.log('PFLOP chart not updated - missing chart or data');
+                }
+
+                if (window.tpsChart && tpsChartData.labels.length > 0) {
+                    window.tpsChart.data.labels = tpsChartData.labels;
+                    window.tpsChart.data.datasets[0].data = tpsChartData.values;
+                    window.tpsChart.update();
+                } else {
+                    console.log('TPS chart not updated - missing chart or data');
                 }
             });
         });
