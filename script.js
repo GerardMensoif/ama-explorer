@@ -1233,14 +1233,8 @@ const PageManager = {
                 filtered = data.filter(entry => now - entry.timestamp <= 24 * 60 * 60 * 1000);
                 break;
             case '7d':
-                filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
-                break;
-            case '30d':
-                filtered = data.filter(entry => now - entry.timestamp <= 30 * 24 * 60 * 60 * 1000);
-                break;
-            case 'all':
             default:
-                filtered = data;
+                filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
                 break;
         }
 
@@ -1279,14 +1273,8 @@ const PageManager = {
                 filtered = data.filter(entry => now - entry.timestamp <= 24 * 60 * 60 * 1000);
                 break;
             case '7d':
-                filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
-                break;
-            case '30d':
-                filtered = data.filter(entry => now - entry.timestamp <= 30 * 24 * 60 * 60 * 1000);
-                break;
-            case 'all':
             default:
-                filtered = data;
+                filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
                 break;
         }
 
@@ -1671,7 +1659,27 @@ const PageManager = {
                         <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
                         <div style="display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start;">
                             <span class="tx-type ${txType}" style="display: inline-block; width: auto;">${txType === 'sent' ? 'Sent' : txType === 'recv' ? 'Received' : 'Transaction'}</span>
-                            ${tx.metadata?.entry_slot ? `<span style="font-size: 0.8em; color: #b3b3b3;">${Utils.formatSlotToDateTime(tx.metadata.entry_slot)}</span>` : ''}
+                            ${tx.metadata?.entry_slot ? `<span style="font-size: 0.8em; color: #b3b3b3;">${
+                                (tx.tx && tx.tx.nonce) ?
+                                    new Date(tx.tx.nonce / 1000000).toLocaleString('fr-FR', {
+                                        day: '2-digit',
+                                        month: '2-digit',
+                                        year: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        second: '2-digit'
+                                    }) :
+                                    tx.nonce ?
+                                    new Date(tx.nonce / 1000000).toLocaleString('fr-FR', {
+                                        day: '2-digit',
+                                        month: '2-digit',
+                                        year: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        second: '2-digit'
+                                    }) :
+                                    Utils.formatSlotToDateTime(tx.metadata.entry_slot)
+                            }</span>` : ''}
                         </div>
                     </div>
                     <div class="tx-details">
@@ -2329,7 +2337,17 @@ const SearchManager = {
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
                             <strong>Date:</strong>
                             <span style="color: #b3b3b3;">
-                                ${Utils.formatSlotToDateTime(tx.metadata.entry_slot)}
+                                ${tx.tx.nonce ?
+                                    new Date(tx.tx.nonce / 1000000).toLocaleString('fr-FR', {
+                                        day: '2-digit',
+                                        month: '2-digit',
+                                        year: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        second: '2-digit'
+                                    }) :
+                                    Utils.formatSlotToDateTime(tx.metadata.entry_slot)
+                                }
                             </span>
                         </div>` : ''}
                     </div>
