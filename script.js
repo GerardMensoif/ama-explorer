@@ -1,5 +1,6 @@
 // Configuration de l'API
 const API_BASE = 'https://nodes.amadeus.bot';
+const WS_URL = 'wss://nodes.amadeus.bot/ws/rpc';
 
 // État global de l'application
 const AppState = {
@@ -12,6 +13,164 @@ const AppState = {
         balances: [],
         transactions: [],
         cursor: null
+    },
+    websocket: null,
+    wsConnected: false,
+    validatorsInterval: null
+};
+
+// Gestionnaire WebSocket
+const WebSocketManager = {
+    ws: null,
+    reconnectTimeout: null,
+    rejoined: false,
+    startTime: null,
+
+    init() {
+        this.connect();
+    },
+
+    connect() {
+        this.startTime = Date.now();
+        this.rejoined = false;
+
+        try {
+            this.ws = new WebSocket(WS_URL);
+            AppState.websocket = this.ws;
+
+            this.ws.addEventListener('open', (event) => {
+                console.log('WebSocket connected');
+                AppState.wsConnected = true;
+                this.updateConnectionStatus(true);
+            });
+
+            this.ws.addEventListener('close', (event) => {
+                console.log('WebSocket closed, reconnecting:', event.code, event.reason);
+                AppState.wsConnected = false;
+                this.updateConnectionStatus(false);
+                this.reconnect();
+            });
+
+            this.ws.addEventListener('error', (event) => {
+                console.log('WebSocket error:', event);
+                this.reconnect();
+            });
+
+            this.ws.addEventListener('message', (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    this.handleMessage(data);
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            });
+
+        } catch (error) {
+            console.error('Error creating WebSocket:', error);
+            this.reconnect();
+        }
+    },
+
+    async reconnect() {
+        if (this.rejoined) return;
+
+        this.rejoined = true;
+        AppState.websocket = null;
+        AppState.wsConnected = false;
+
+        // Don't try to reconnect too rapidly
+        const timeSinceLastJoin = Date.now() - this.startTime;
+        if (timeSinceLastJoin < 10000) {
+            // Less than 10 seconds elapsed since last join. Pause a bit.
+            await new Promise(resolve => setTimeout(resolve, 10000 - timeSinceLastJoin));
+        }
+
+        // Reconnect
+        this.connect();
+    },
+
+    handleMessage(data) {
+        console.log('WebSocket message:', data);
+
+        switch (data.op) {
+            case 'event_stats':
+                this.handleStatsUpdate(data.stats);
+                break;
+            case 'event_entry':
+                this.handleNewEntry(data.entry);
+                break;
+            case 'event_txs':
+                this.handleNewTransactions(data.txs);
+                break;
+            default:
+                console.log('Unknown WebSocket op:', data.op);
+        }
+    },
+
+    handleStatsUpdate(stats) {
+        // Mettre à jour les stats en temps réel
+        console.log('handleStatsUpdate called, currentPage:', AppState.currentPage);
+        if (AppState.currentPage === 'home') {
+            console.log('Updating stats display');
+            AppState.stats = stats;
+            PageManager.updateStats(stats);
+        }
+    },
+
+    handleNewEntry(entry) {
+        // Ajouter le nouveau bloc en tête de liste
+        console.log('handleNewEntry called, currentPage:', AppState.currentPage);
+        if (AppState.currentPage === 'home') {
+            console.log('Adding new entry to blocks');
+            AppState.latestBlocks.unshift(entry);
+            if (AppState.latestBlocks.length > 10) {
+                AppState.latestBlocks.pop();
+            }
+            PageManager.renderLatestBlocks(AppState.latestBlocks);
+        }
+    },
+
+    handleNewTransactions(txs) {
+        // Ajouter les nouvelles transactions
+        if (AppState.currentPage === 'home' && txs.length > 0) {
+            // Ajouter toutes les nouvelles transactions (pas de filtre)
+            AppState.latestTransactions = [...txs, ...AppState.latestTransactions].slice(0, 10);
+            // Recharger les détails complets pour les nouvelles transactions
+            this.loadTransactionDetails(txs);
+        }
+    },
+
+    async loadTransactionDetails(txs) {
+        const detailPromises = txs.map(tx =>
+            API.getTransaction(tx.hash).catch(() => tx)
+        );
+        const txsWithDetails = await Promise.all(detailPromises);
+
+        // Mettre à jour la liste avec les détails
+        AppState.latestTransactions = [
+            ...txsWithDetails,
+            ...AppState.latestTransactions.filter(t => !txs.find(newTx => newTx.hash === t.hash))
+        ].slice(0, 10);
+
+        PageManager.renderLatestTransactions(AppState.latestTransactions);
+    },
+
+    updateConnectionStatus(connected) {
+        // Afficher un indicateur de connexion (optionnel)
+        const indicator = document.getElementById('wsIndicator');
+        if (indicator) {
+            indicator.style.backgroundColor = connected ? '#32cd32' : '#ff6347';
+            indicator.title = connected ? 'WebSocket connected' : 'WebSocket disconnected';
+        }
+    },
+
+    disconnect() {
+        if (this.ws) {
+            this.ws.close();
+        }
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+        }
     }
 };
 
@@ -32,95 +191,6 @@ const Utils = {
         return hash.substring(0, length) + '...' + hash.substring(hash.length - length);
     },
 
-    // Formatter le temps relatif basé sur les slots (2 blocs par seconde)
-    formatTimeAgo(slot, currentSlot = null) {
-        if (!slot) return '-';
-
-        // Si on a le slot actuel, calculer la différence en slots
-        if (currentSlot) {
-            const slotDiff = currentSlot - slot;
-            const secondsAgo = Math.floor(slotDiff * 0.5); // 0.5 sec par slot (2 blocs/sec)
-            const minutesAgo = Math.floor(secondsAgo / 60);
-            const hoursAgo = Math.floor(minutesAgo / 60);
-            const daysAgo = Math.floor(hoursAgo / 24);
-
-            if (daysAgo > 0) return `${daysAgo}d ago`;
-            if (hoursAgo > 0) return `${hoursAgo}h ago`;
-            if (minutesAgo > 0) return `${minutesAgo}m ago`;
-            if (secondsAgo >= 1) return `${secondsAgo}s ago`;
-            return 'now';
-        }
-
-        // Fallback: estimation approximative basée sur l'âge du slot
-        // Approximation: slots récents = now, anciens = temps relatif
-        return 'now';
-    },
-
-    // Convertir un slot en timestamp approximatif
-    slotToTimestamp(slot) {
-        if (!slot) return null;
-
-        // Référence fixe calibrée: 19 septembre 2025 20:00:00
-        const referenceSlot = 30116000;
-        const referenceTimestamp = new Date('2025-09-19T20:00:00').getTime();
-
-        // Calcul basé sur 0.5 seconde par slot (2 blocs/sec)
-        const slotDiff = slot - referenceSlot;
-        const timeDiff = slotDiff * 500; // 500ms par slot
-
-        return referenceTimestamp + timeDiff;
-    },
-
-    // Formatter une date à partir d'un slot
-    formatSlotToDateTime(slot) {
-        if (!slot) return '-';
-
-        const timestamp = this.slotToTimestamp(slot);
-        if (!timestamp) return `Slot ${slot}`;
-
-        const date = new Date(timestamp);
-        return date.toLocaleString('fr-FR', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        });
-    },
-
-    // Formatter le temps relatif à partir d'un slot avec slot actuel
-    formatTimeFromSlot(block, currentSlot = null) {
-        // Priorité 1: utiliser le timestamp si disponible
-        if (block.header_unpacked && block.header_unpacked.timestamp) {
-            const now = Date.now();
-            const blockTime = block.header_unpacked.timestamp * 1000;
-            const diff = now - blockTime;
-
-            const seconds = Math.floor(diff / 1000);
-            const minutes = Math.floor(seconds / 60);
-            const hours = Math.floor(minutes / 60);
-            const days = Math.floor(hours / 24);
-
-            if (days > 0) return `il y a ${days}j`;
-            if (hours > 0) return `il y a ${hours}h`;
-            if (minutes > 0) return `il y a ${minutes}min`;
-            if (seconds > 30) return `il y a ${seconds}s`;
-            return 'now';
-        }
-
-        // Priorité 2: utiliser le slot avec le slot actuel si disponible
-        if (block.header_unpacked && block.header_unpacked.slot && currentSlot) {
-            return this.formatTimeAgo(block.header_unpacked.slot, currentSlot);
-        }
-
-        // Priorité 3: utiliser juste le slot
-        if (block.header_unpacked && block.header_unpacked.slot) {
-            return this.formatTimeAgo(block.header_unpacked.slot);
-        }
-
-        return '-';
-    },
 
     // Copier dans le presse-papier
     async copyToClipboard(text) {
@@ -214,6 +284,12 @@ const API = {
         return await this.request(`/api/chain/txs_in_entry/${entryHash}`);
     },
 
+    // Entry (bloc) avec filtrage optionnel par fonction
+    async getEntry(entryHash, filterFunction = null) {
+        const filter = filterFunction ? `?filter_on_function=${filterFunction}` : '';
+        return await this.request(`/api/chain/hash/${entryHash}${filter}`);
+    },
+
     // Balance d'une adresse
     async getBalance(address, symbol = 'AMA') {
         return await this.request(`/api/wallet/balance/${address}/${symbol}`);
@@ -254,6 +330,11 @@ const API = {
             console.error('Error loading PFLOPS data:', error);
             throw error;
         }
+    },
+
+    // Validators scores from current epoch
+    async getValidators() {
+        return await this.request('/api/epoch/score');
     }
 
 };
@@ -399,6 +480,13 @@ const PageManager = {
 
     async loadPageData(pageName, params = null) {
         console.log('Loading page:', pageName, 'with params:', params);
+
+        // Clear validators auto-refresh interval when leaving the page
+        if (pageName !== 'validators' && AppState.validatorsInterval) {
+            clearInterval(AppState.validatorsInterval);
+            AppState.validatorsInterval = null;
+        }
+
         switch (pageName) {
             case 'home':
                 await this.loadHomePage();
@@ -411,6 +499,9 @@ const PageManager = {
                 break;
             case 'richlist':
                 await this.loadRichlistPage();
+                break;
+            case 'validators':
+                await this.loadValidatorsPage();
                 break;
             case 'pflops':
                 await this.loadPflopPage();
@@ -450,12 +541,25 @@ const PageManager = {
     updateStats(stats) {
         // Calculer l'epoch basé sur la hauteur (100,000 blocks par epoch)
         const currentEpoch = Math.floor((stats.height || 0) / 100000);
+
+        // Animer le changement de hauteur avec effet flip
+        this.animateHeight(stats.height || 0);
+
         document.getElementById('currentEpoch').textContent = currentEpoch;
         document.getElementById('circulatingSupply').textContent = `${Utils.formatNumber(stats.circulating || 0)}`;
         document.getElementById('pflopsStat').textContent = (stats.pflops || 0).toFixed(2);
         document.getElementById('tpsStat').textContent = (stats.txs_per_sec || 0).toFixed(1);
 
         AppState.stats = stats;
+    },
+
+    animateHeight(newHeight) {
+        const heightElement = document.getElementById('currentHeight');
+        const newHeightStr = newHeight.toLocaleString('en-US');
+
+        // Mise à jour directe sans animation
+        heightElement.textContent = newHeightStr;
+        heightElement.setAttribute('data-height', newHeightStr);
     },
 
     async loadLatestBlocks() {
@@ -471,9 +575,9 @@ const PageManager = {
                 if (height < 0) break;
 
                 try {
-                    const blockData = await API.getBlocksByHeight(height);
+                    const blockData = await API.request(`/api/chain/height/${height}`);
                     if (blockData.entries && blockData.entries.length > 0) {
-                        blocks.push(...blockData.entries);
+                        blocks.push(blockData.entries[0]);
                     }
                 } catch (error) {
                     console.warn(`Impossible de charger le block ${height}:`, error);
@@ -494,31 +598,19 @@ const PageManager = {
             return;
         }
 
-        // Obtenir le slot actuel depuis les stats ou le premier bloc
-        let currentSlot = null;
-        try {
-            if (AppState.stats && AppState.stats.slot) {
-                currentSlot = AppState.stats.slot;
-            } else if (blocks.length > 0 && blocks[0].header_unpacked && blocks[0].header_unpacked.slot) {
-                // Utiliser le slot du premier bloc (le plus récent) comme référence
-                currentSlot = blocks[0].header_unpacked.slot;
-            }
-        } catch (error) {
-            console.warn('Could not get current slot:', error);
-        }
-
-        const html = blocks.map((block, index) => `
-            <div class="block-item" onclick="PageManager.showPage('block', true, {blockNumber: '${block.header_unpacked.height}'})">
-                <div class="block-info">
-                    <h4>Block #${block.header_unpacked.height}</h4>
-                    <p class="text-truncate">${Utils.formatHash(block.hash, 12)}</p>
+        const html = blocks.map((block, index) => {
+            return `
+                <div class="block-item" onclick="PageManager.showPage('block', true, {blockNumber: '${block.header_unpacked.height}'})">
+                    <div class="block-info">
+                        <h4>Block #${block.header_unpacked.height}</h4>
+                        <p class="text-truncate">${Utils.formatHash(block.hash, 12)}</p>
+                    </div>
+                    <div class="block-meta">
+                        <div class="tx-count">${block.tx_count || 0} txs</div>
+                    </div>
                 </div>
-                <div class="block-meta">
-                    <div class="tx-count">${block.tx_count || 0} txs</div>
-                    <div class="time">${Utils.formatTimeFromSlot(block, currentSlot)}</div>
-                </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
 
         // Stocker les blocks pour l'accès plus tard
         AppState.latestBlocks = blocks;
@@ -562,7 +654,14 @@ const PageManager = {
                 }
             }
 
-            this.renderLatestTransactions(allTransactions.slice(0, 10));
+            // Charger les détails complets (avec result) pour les 10 premières transactions en parallèle
+            const txsToDisplay = allTransactions.slice(0, 10);
+            const detailPromises = txsToDisplay.map(tx =>
+                API.getTransaction(tx.hash).catch(() => tx) // Fallback sur la transaction sans détails
+            );
+            const txsWithDetails = await Promise.all(detailPromises);
+
+            this.renderLatestTransactions(txsWithDetails);
 
         } catch (error) {
             console.error('Error loading latest transactions:', error);
@@ -583,6 +682,34 @@ const PageManager = {
             const action = tx.tx.actions[0];
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
+            // Extraire et formater le statut
+            let txStatus = 'unknown';
+            if (tx.result && tx.result.error) {
+                txStatus = tx.result.error;
+            }
+            const isSuccess = txStatus === 'ok' || txStatus === ':ok';
+
+            const formatStatus = (status) => {
+                if (status === 'ok' || status === ':ok') return 'OK';
+                return status
+                    .replace(/^:/, '')
+                    .split('_')
+                    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                    .join(' ');
+            };
+
+            const statusText = formatStatus(txStatus);
+            const statusBadge = `<span style="
+                display: inline-block;
+                padding: 0.1rem 0.4rem;
+                border-radius: 8px;
+                font-size: 0.65rem;
+                font-weight: bold;
+                background: ${isSuccess ? 'rgba(50, 205, 50, 0.2)' : 'rgba(255, 99, 71, 0.2)'};
+                color: ${isSuccess ? '#32cd32' : '#ff6347'};
+                margin-left: 0.3rem;
+            ">${statusText}</span>`;
+
             let amount = '';
             if (isTransfer && action.args.length >= 2) {
                 const amountValue = action.args[1];
@@ -598,7 +725,7 @@ const PageManager = {
                 <div class="transaction-item-small" onclick="SearchManager.showTransactionFromHash('${tx.hash}')">
                     <div class="tx-info">
                         <div class="tx-hash-small">${Utils.formatHash(tx.hash, 12)}</div>
-                        <div class="tx-function-small">${action.function}</div>
+                        <div class="tx-function-small">${action.function} ${statusBadge}</div>
                     </div>
                     <div class="tx-amount-small">
                         ${amount || action.contract}
@@ -679,9 +806,6 @@ const PageManager = {
             return;
         }
 
-        // Utiliser le slot le plus récent comme référence
-        const currentSlot = blocks.length > 0 ? blocks[0].header_unpacked.slot : null;
-
         const html = `
             <div class="card">
                 <div class="card-header">
@@ -697,7 +821,6 @@ const PageManager = {
                                 </div>
                                 <div class="block-meta">
                                     <div class="tx-count">${block.tx_count || 0} txs</div>
-                                    <div class="time">${Utils.formatTimeAgo(block.header_unpacked.slot, currentSlot)}</div>
                                 </div>
                             </div>
                         `).join('')}
@@ -882,6 +1005,119 @@ const PageManager = {
                 </div>
             `;
         }
+    },
+
+    async loadValidatorsPage() {
+        // Clear existing interval if any
+        if (AppState.validatorsInterval) {
+            clearInterval(AppState.validatorsInterval);
+            AppState.validatorsInterval = null;
+        }
+
+        const loadData = async () => {
+            const container = document.getElementById('validatorsContainer');
+            const totalValidatorsEl = document.getElementById('totalValidators');
+            const totalScoreEl = document.getElementById('totalScore');
+            const topValidatorEl = document.getElementById('topValidator');
+            const totalBurnedEl = document.getElementById('totalBurned');
+
+            try {
+                // Get validators data
+                const validators = await API.getValidators();
+
+                // Get chain stats for burned value
+                const statsData = await API.getStats();
+                const burned = statsData?.stats?.burned || 0;
+
+                // Calculate statistics
+                const totalValidators = validators.length;
+                const totalScore = validators.reduce((sum, [, score]) => sum + score, 0);
+                const topValidator = validators.length > 0 ? Utils.formatHash(validators[0][0], 8) : 'N/A';
+
+                // Update statistics
+                totalValidatorsEl.textContent = Utils.formatNumber(totalValidators);
+                totalScoreEl.textContent = Utils.formatNumber(totalScore);
+                topValidatorEl.textContent = topValidator;
+                totalBurnedEl.textContent = Utils.formatNumber(burned) + ' AMA';
+
+                // Render validators table
+                this.renderValidatorsTable(validators);
+
+            } catch (error) {
+                console.error('Error loading validators:', error);
+                container.innerHTML = `
+                    <div class="card">
+                        <div class="card-content">
+                            <p>Error loading validators data. Please try again later.</p>
+                        </div>
+                    </div>
+                `;
+            }
+        };
+
+        // Load initial data
+        await loadData();
+
+        // Auto-refresh every 30 seconds
+        AppState.validatorsInterval = setInterval(() => {
+            if (AppState.currentPage === 'validators') {
+                loadData();
+            }
+        }, 30000);
+    },
+
+    renderValidatorsTable(validators) {
+        const container = document.getElementById('validatorsContainer');
+
+        if (!validators || validators.length === 0) {
+            container.innerHTML = `
+                <div class="card">
+                    <div class="card-content">
+                        <p>No validators data available.</p>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        const html = `
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width: 80px;">Rank</th>
+                        <th>Validator Address</th>
+                        <th style="width: 150px; text-align: right;">Score</th>
+                        <th style="width: 120px; text-align: right;">Percentage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${validators.map(([address, score], index) => {
+                        const totalScore = validators.reduce((sum, [, s]) => sum + s, 0);
+                        const percentage = totalScore > 0 ? ((score / totalScore) * 100).toFixed(2) : '0.00';
+                        return `
+                            <tr>
+                                <td style="text-align: center;">
+                                    ${index === 0 ? '<i class="fas fa-crown" style="color: gold;"></i>' : '#' + (index + 1)}
+                                </td>
+                                <td>
+                                    <span onclick="BlockExplorer.viewAddress('${address}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">
+                                        ${Utils.formatHash(address, 16)}
+                                    </span>
+                                </td>
+                                <td style="text-align: right; font-weight: 600;">
+                                    ${Utils.formatNumber(score)}
+                                </td>
+                                <td style="text-align: right;">
+                                    ${percentage}%
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        `;
+
+        container.innerHTML = html;
     },
 
     async loadPflopPage() {
@@ -1646,6 +1882,34 @@ const PageManager = {
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
             const txType = tx.metadata?.tx_event || 'unknown';
 
+            // Extraire et formater le statut
+            let txStatus = 'unknown';
+            if (tx.result && tx.result.error) {
+                txStatus = tx.result.error;
+            }
+            const isSuccess = txStatus === 'ok' || txStatus === ':ok';
+
+            const formatStatus = (status) => {
+                if (status === 'ok' || status === ':ok') return 'OK';
+                return status
+                    .replace(/^:/, '')
+                    .split('_')
+                    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                    .join(' ');
+            };
+
+            const statusText = formatStatus(txStatus);
+            const statusBadge = `<span style="
+                display: inline-block;
+                padding: 0.15rem 0.4rem;
+                border-radius: 8px;
+                font-size: 0.7rem;
+                font-weight: bold;
+                background: ${isSuccess ? 'rgba(50, 205, 50, 0.2)' : 'rgba(255, 99, 71, 0.2)'};
+                color: ${isSuccess ? '#32cd32' : '#ff6347'};
+                margin-left: 0.3rem;
+            ">${statusText}</span>`;
+
             let amount = '';
             if (isTransfer && action.args.length >= 2) {
                 const amountValue = action.args[1];
@@ -1683,7 +1947,7 @@ const PageManager = {
                         </div>
                     </div>
                     <div class="tx-details">
-                        <div class="tx-function">${action.function}</div>
+                        <div class="tx-function">${action.function} ${statusBadge}</div>
                         <div class="tx-contract">${Utils.formatHash(action.contract, 8)}</div>
                     </div>
                     <div class="tx-meta">
@@ -1819,7 +2083,13 @@ const BlockExplorer = {
             const txsData = await API.getTransactionsByEntry(blockHash);
 
             if (txsData.txs && txsData.txs.length > 0) {
-                this.renderBlockTransactions(txsData.txs, transactionsContainer);
+                // Charger les détails complets (avec result) pour toutes les transactions en parallèle
+                const detailPromises = txsData.txs.map(tx =>
+                    API.getTransaction(tx.hash).catch(() => tx) // Fallback sur la transaction sans détails
+                );
+                const txsWithDetails = await Promise.all(detailPromises);
+
+                this.renderBlockTransactions(txsWithDetails, transactionsContainer);
             } else {
                 transactionsContainer.innerHTML = '<div class="text-secondary">No transactions found in this block</div>';
             }
@@ -1836,6 +2106,34 @@ const BlockExplorer = {
         const html = transactions.map((tx, index) => {
             const action = tx.tx.actions[0];
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
+
+            // Extraire et formater le statut
+            let txStatus = 'unknown';
+            if (tx.result && tx.result.error) {
+                txStatus = tx.result.error;
+            }
+            const isSuccess = txStatus === 'ok' || txStatus === ':ok';
+
+            const formatStatus = (status) => {
+                if (status === 'ok' || status === ':ok') return 'OK';
+                return status
+                    .replace(/^:/, '')
+                    .split('_')
+                    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                    .join(' ');
+            };
+
+            const statusText = formatStatus(txStatus);
+            const statusBadge = `<span style="
+                display: inline-block;
+                padding: 0.2rem 0.5rem;
+                border-radius: 8px;
+                font-size: 0.75rem;
+                font-weight: bold;
+                background: ${isSuccess ? 'rgba(50, 205, 50, 0.2)' : 'rgba(255, 99, 71, 0.2)'};
+                color: ${isSuccess ? '#32cd32' : '#ff6347'};
+                margin-left: 0.5rem;
+            ">${statusText}</span>`;
 
             let amount = '';
             let recipient = '';
@@ -1870,7 +2168,7 @@ const BlockExplorer = {
                         </div>
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; font-size: 0.9em;">
                             <div><strong>Function:</strong></div>
-                            <div>${action.function}</div>
+                            <div>${action.function} ${statusBadge}</div>
                             <div><strong>Contract:</strong></div>
                             <div>${action.contract}</div>
                             ${isTransfer ?
@@ -2297,6 +2595,40 @@ const SearchManager = {
         const action = tx.tx.actions[0];
         const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
+        // Extraire et formater le statut de la transaction
+        let txStatus = 'unknown';
+        if (tx.result && tx.result.error) {
+            txStatus = tx.result.error;
+        }
+
+        const isSuccess = txStatus === 'ok' || txStatus === ':ok';
+
+        // Formater le statut pour l'affichage (snake_case -> Title Case)
+        const formatStatus = (status) => {
+            if (status === 'ok' || status === ':ok') return 'OK';
+            return status
+                .replace(/^:/, '')
+                .split('_')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+        };
+
+        const statusText = formatStatus(txStatus);
+        const statusBadge = `
+            <span style="
+                display: inline-block;
+                padding: 0.3rem 0.8rem;
+                border-radius: 12px;
+                font-size: 0.85rem;
+                font-weight: bold;
+                background: ${isSuccess ? 'rgba(50, 205, 50, 0.2)' : 'rgba(255, 99, 71, 0.2)'};
+                color: ${isSuccess ? '#32cd32' : '#ff6347'};
+                border: 1px solid ${isSuccess ? '#32cd32' : '#ff6347'};
+            ">
+                <i class="fas fa-${isSuccess ? 'check-circle' : 'times-circle'}"></i> ${statusText}
+            </span>
+        `;
+
         // Extraire les informations de transfer si c'est le cas
         let transferInfo = '';
         if (isTransfer && action.args.length >= 2) {
@@ -2361,6 +2693,7 @@ const SearchManager = {
             <div style="margin: 2rem 0;">
                 <div style="display: grid; gap: 1rem;">
                     <div><strong>Hash:</strong> <span onclick="SearchManager.goToTransactionPage('${tx.hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour aller à la page de la transaction">${tx.hash}</span></div>
+                    <div><strong>Status:</strong> ${statusBadge}</div>
                     ${!isTransfer ? `<div><strong>Signer:</strong> <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 16)}</span></div>` : ''}
                     <div><strong>Nonce:</strong> ${tx.tx.nonce}</div>
                     <div><strong>Contract:</strong> ${action.contract}</div>
@@ -2435,29 +2768,83 @@ document.addEventListener('DOMContentLoaded', () => {
     PageManager.init();
     SearchManager.init();
     ModalManager.init();
+    WebSocketManager.init();
 
-    // Rafraîchissement automatique toutes les 30 secondes pour la page complète
+    // Rafraîchissement automatique désactivé (WebSocket prend le relais)
+    // setInterval(() => {
+    //     if (AppState.currentPage === 'home') {
+    //         PageManager.loadHomePage();
+    //     }
+    // }, 30000);
+
+    // Rafraîchissement automatique désactivé (WebSocket prend le relais)
+    // setInterval(async () => {
+    //     if (AppState.currentPage === 'home') {
+    //         try {
+    //             // Charger seulement les stats pour avoir le slot actuel
+    //             const stats = await API.getStats();
+    //             if (stats) {
+    //                 AppState.stats = stats.stats;
+    //             }
+    //
+    //             // Charger seulement les derniers blocs
+    //             await PageManager.loadLatestBlocks();
+    //         } catch (error) {
+    //             console.error('Error refreshing latest blocks:', error);
+    //         }
+    //     }
+    // }, 10000);
+
+    // Mise à jour des temps relatifs toutes les secondes
+    // On ajoute le temps écoulé depuis le chargement au temps initial
     setInterval(() => {
         if (AppState.currentPage === 'home') {
-            PageManager.loadHomePage();
-        }
-    }, 30000);
+            const timeElements = document.querySelectorAll('.block-item .time');
+            const now = Date.now();
 
-    // Rafraîchissement des Latest Blocks toutes les 10 secondes
-    setInterval(async () => {
-        if (AppState.currentPage === 'home') {
-            try {
-                // Charger seulement les stats pour avoir le slot actuel
-                const stats = await API.getStats();
-                if (stats) {
-                    AppState.stats = stats.stats;
+            timeElements.forEach(element => {
+                const loadTime = parseInt(element.getAttribute('data-load-time'));
+                const initialText = element.getAttribute('data-initial-text');
+
+                if (!loadTime || !initialText) return;
+
+                // Calculer le temps écoulé depuis le chargement
+                const elapsedSeconds = Math.floor((now - loadTime) / 1000);
+
+                // Parser le texte initial pour extraire la valeur
+                let match;
+                let baseSeconds = 0;
+
+                if (initialText === 'now') {
+                    baseSeconds = 0;
+                } else if (match = initialText.match(/il y a (\d+)s/)) {
+                    baseSeconds = parseInt(match[1]);
+                } else if (match = initialText.match(/il y a (\d+)min/)) {
+                    baseSeconds = parseInt(match[1]) * 60;
+                } else if (match = initialText.match(/il y a (\d+)h/)) {
+                    baseSeconds = parseInt(match[1]) * 3600;
+                } else if (match = initialText.match(/il y a (\d+)j/)) {
+                    baseSeconds = parseInt(match[1]) * 86400;
+                } else {
+                    // Format non reconnu, ne rien changer
+                    return;
                 }
 
-                // Charger seulement les derniers blocs
-                await PageManager.loadLatestBlocks();
-            } catch (error) {
-                console.error('Error refreshing latest blocks:', error);
-            }
+                // Temps total = temps initial + temps écoulé
+                const totalSeconds = baseSeconds + elapsedSeconds;
+                const minutes = Math.floor(totalSeconds / 60);
+                const hours = Math.floor(minutes / 60);
+                const days = Math.floor(hours / 24);
+
+                let newText;
+                if (days > 0) newText = `il y a ${days}j`;
+                else if (hours > 0) newText = `il y a ${hours}h`;
+                else if (minutes > 0) newText = `il y a ${minutes}min`;
+                else if (totalSeconds > 30) newText = `il y a ${totalSeconds}s`;
+                else newText = 'now';
+
+                element.textContent = newText;
+            });
         }
-    }, 10000);
+    }, 1000);
 });

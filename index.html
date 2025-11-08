@@ -32,8 +32,20 @@
                 <a href="#" class="nav-link" data-page="blocks">Blocks</a>
                 <a href="#" class="nav-link" data-page="transactions">Transactions</a>
                 <a href="#" class="nav-link" data-page="richlist">Rich List</a>
+                <a href="#" class="nav-link" data-page="validators">Validators</a>
                 <a href="#" class="nav-link" data-page="pflops">Charts</a>
                 <a href="#" class="nav-link" data-page="address" style="display: none;">Address</a>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span id="wsIndicator" style="
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                    background-color: #ff6347;
+                    display: inline-block;
+                    transition: background-color 0.3s;
+                " title="WebSocket disconnected"></span>
+                <span style="font-size: 0.85rem; color: rgba(255, 255, 255, 0.7);">Live</span>
             </div>
         </div>
     </nav>
@@ -54,6 +66,16 @@
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-icon">
+                        <i class="fas fa-layer-group"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="currentHeight">-</h3>
+                        <p>Current Height</p>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">
                         <i class="fas fa-cubes"></i>
                     </div>
                     <div class="stat-content">
@@ -61,7 +83,6 @@
                         <p>Current Epoch</p>
                     </div>
                 </div>
-
 
                 <div class="stat-card">
                     <div class="stat-icon">
@@ -202,6 +223,54 @@
             </div>
         </div>
 
+        <!-- Page Validators -->
+        <div id="validators" class="page">
+            <div class="page-header">
+                <h1>Validators</h1>
+                <div class="page-info">
+                    <p>Current epoch validators and their scores</p>
+                </div>
+            </div>
+
+            <div class="stats-summary">
+                <div class="summary-card">
+                    <div class="summary-content">
+                        <h3 id="totalValidators">-</h3>
+                        <p>Total Validators</p>
+                    </div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-content">
+                        <h3 id="totalScore">-</h3>
+                        <p>Total Score</p>
+                    </div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-content">
+                        <h3 id="topValidator">-</h3>
+                        <p>Top Validator</p>
+                    </div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-content">
+                        <h3 id="totalBurned">-</h3>
+                        <p>Total Burned</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2><i class="fas fa-server"></i> Validators Ranking</h2>
+                </div>
+                <div class="card-content">
+                    <div id="validatorsContainer">
+                        <div class="loading">Loading validators...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Page Charts -->
         <div id="pflops" class="page">
             <div class="page-header">
@@ -215,8 +284,6 @@
                 <div class="time-filters">
                     <button class="time-filter active" data-period="24h">Last 24 Hours</button>
                     <button class="time-filter" data-period="7d">Last 7 Days</button>
-                    <button class="time-filter" data-period="30d">Last 30 Days</button>
-                    <button class="time-filter" data-period="all">All Time</button>
                 </div>
             </div>
 

@@ -71,7 +71,8 @@ async function collectPFLOPS() {
             timestamp: Date.now(),
             date: new Date().toISOString(),
             pflops: stats.pflops,
-            epoch: Math.floor(stats.height / 100000), // Calculer l'epoch
+            txs_per_sec: stats.txs_per_sec || 0,
+            epoch: Math.floor(stats.height / 100000),
             height: stats.height || null,
             circulating: stats.circulating || null
         };
@@ -79,15 +80,15 @@ async function collectPFLOPS() {
         // Ajouter la nouvelle entrée
         existingData.data.push(newEntry);
 
-        // Garder seulement les 30 derniers jours (24 * 30 = 720 entrées max)
-        if (existingData.data.length > 720) {
-            existingData.data = existingData.data.slice(-720);
+        // Garder seulement les 7 derniers jours (7 * 24 * 60 = 10080 entrées max)
+        if (existingData.data.length > 10080) {
+            existingData.data = existingData.data.slice(-10080);
         }
 
         // Sauvegarder
         saveData(existingData);
 
-        console.log(`PFLOPS: ${stats.pflops}, Epoch: ${stats.epoch || 'N/A'}, Height: ${stats.height || 'N/A'}`);
+        console.log(`PFLOPS: ${stats.pflops}, Epoch: ${newEntry.epoch}, Height: ${stats.height || 'N/A'}`);
 
     } catch (error) {
         console.error('Error collecting PFLOPS:', error.message);
