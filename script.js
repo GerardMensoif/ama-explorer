@@ -600,9 +600,9 @@ const PageManager = {
 
         const html = blocks.map((block, index) => {
             return `
-                <div class="block-item" onclick="PageManager.showPage('block', true, {blockNumber: '${block.header_unpacked.height}'})">
+                <div class="block-item" onclick="PageManager.showPage('block', true, {blockNumber: '${block.header.height}'})">
                     <div class="block-info">
-                        <h4>Block #${block.header_unpacked.height}</h4>
+                        <h4>Block #${block.header.height}</h4>
                         <p class="text-truncate">${Utils.formatHash(block.hash, 12)}</p>
                     </div>
                     <div class="block-meta">
@@ -678,8 +678,8 @@ const PageManager = {
             return;
         }
 
-        const html = transactions.map(tx => {
-            const action = tx.tx.actions[0];
+        const html = transactions.filter(tx => tx.tx && tx.tx.action).map(tx => {
+            const action = tx.tx.action;
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
             // Extraire et formater le statut
@@ -814,9 +814,9 @@ const PageManager = {
                 <div class="card-content">
                     <div class="blocks-list">
                         ${blocks.map((block, index) => `
-                            <div class="block-item" onclick="PageManager.showPage('block', true, {blockNumber: '${block.header_unpacked.height}'})">
+                            <div class="block-item" onclick="PageManager.showPage('block', true, {blockNumber: '${block.header.height}'})">
                                 <div class="block-info">
-                                    <h4>Block #${block.header_unpacked.height}</h4>
+                                    <h4>Block #${block.header.height}</h4>
                                     <p class="text-truncate">${Utils.formatHash(block.hash, 16)}</p>
                                 </div>
                                 <div class="block-meta">
@@ -917,8 +917,8 @@ const PageManager = {
                 </div>
                 <div class="card-content">
                     <div class="transactions-list">
-                        ${transactions.map(tx => {
-                            const action = tx.tx.actions[0];
+                        ${transactions.filter(tx => tx.tx && tx.tx.action).map(tx => {
+                            const action = tx.tx.action;
                             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
                             let amount = '';
@@ -1660,7 +1660,7 @@ const PageManager = {
                     <div class="block-details">
                         <div class="detail-row">
                             <span class="label">Height:</span>
-                            <span class="value">${block.header_unpacked.height}</span>
+                            <span class="value">${block.header.height}</span>
                         </div>
                         <div class="detail-row">
                             <span class="label">Hash:</span>
@@ -1668,15 +1668,15 @@ const PageManager = {
                         </div>
                         <div class="detail-row">
                             <span class="label">Previous Hash:</span>
-                            <span class="value hash">${block.header_unpacked.previous_hash}</span>
+                            <span class="value hash">${block.header.previous_hash}</span>
                         </div>
                         <div class="detail-row">
                             <span class="label">Slot:</span>
-                            <span class="value">${block.header_unpacked.slot}</span>
+                            <span class="value">${block.header.slot}</span>
                         </div>
                         <div class="detail-row">
                             <span class="label">Timestamp:</span>
-                            <span class="value">${new Date(block.header_unpacked.timestamp * 1000).toLocaleString()}</span>
+                            <span class="value">${new Date(block.header.timestamp * 1000).toLocaleString()}</span>
                         </div>
                         <div class="detail-row">
                             <span class="label">Transactions:</span>
@@ -1877,8 +1877,8 @@ const PageManager = {
             return;
         }
 
-        const html = transactions.map(tx => {
-            const action = tx.tx.actions[0];
+        const html = transactions.filter(tx => tx.tx && tx.tx.action).map(tx => {
+            const action = tx.tx.action;
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
             const txType = tx.metadata?.tx_event || 'unknown';
 
@@ -2041,15 +2041,15 @@ const BlockExplorer = {
 
         // Affichage initial des informations du bloc
         let html = `
-            <h2>Block #${block.header_unpacked.height} Details</h2>
+            <h2>Block #${block.header.height} Details</h2>
             <div style="margin: 2rem 0;">
                 <div style="display: grid; gap: 1rem;">
                     <div><strong>Hash:</strong> <span onclick="Utils.copyToClipboard('${block.hash}')" style="cursor: pointer; color: rgb(24, 255, 178);">${block.hash}</span></div>
-                    <div><strong>Height:</strong> ${block.header_unpacked.height}</div>
-                    <div><strong>Slot:</strong> ${block.header_unpacked.slot}</div>
-                    <div><strong>Previous Slot:</strong> ${block.header_unpacked.prev_slot}</div>
-                    <div><strong>Previous Hash:</strong> ${Utils.formatHash(block.header_unpacked.prev_hash, 16)}</div>
-                    <div><strong>Signer:</strong> ${Utils.formatHash(block.header_unpacked.signer, 12)}</div>
+                    <div><strong>Height:</strong> ${block.header.height}</div>
+                    <div><strong>Slot:</strong> ${block.header.slot}</div>
+                    <div><strong>Previous Slot:</strong> ${block.header.prev_slot}</div>
+                    <div><strong>Previous Hash:</strong> ${Utils.formatHash(block.header.prev_hash, 16)}</div>
+                    <div><strong>Signer:</strong> ${Utils.formatHash(block.header.signer, 12)}</div>
                     <div><strong>Transaction Count:</strong> ${block.tx_count || 0}</div>
                     ${block.consensus ? `<div><strong>Consensus Score:</strong> ${block.consensus.score}</div>` : ''}
                 </div>
@@ -2103,8 +2103,8 @@ const BlockExplorer = {
     },
 
     renderBlockTransactions(transactions, container) {
-        const html = transactions.map((tx, index) => {
-            const action = tx.tx.actions[0];
+        const html = transactions.filter(tx => tx.tx && tx.tx.action).map((tx, index) => {
+            const action = tx.tx.action;
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
             // Extraire et formater le statut
@@ -2592,7 +2592,13 @@ const SearchManager = {
 
     showTransactionModal(tx) {
         const modalBody = document.getElementById('modalBody');
-        const action = tx.tx.actions[0];
+
+        if (!tx.tx || !tx.tx.action) {
+            modalBody.innerHTML = '<p>Error: Invalid transaction data</p>';
+            return;
+        }
+
+        const action = tx.tx.action;
         const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
         // Extraire et formater le statut de la transaction
