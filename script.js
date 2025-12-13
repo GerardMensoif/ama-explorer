@@ -16,7 +16,13 @@ const AppState = {
     },
     websocket: null,
     wsConnected: false,
-    validatorsInterval: null
+    validatorsInterval: null,
+    lastHeight: null,  // Pour détecter les changements de hauteur
+    accountTracking: {
+        enabled: false,
+        address: null,
+        transactions: []
+    }
 };
 
 // Gestionnaire WebSocket
@@ -102,8 +108,59 @@ const WebSocketManager = {
             case 'event_txs':
                 this.handleNewTransactions(data.txs);
                 break;
+            case 'event_account_tx':
+                this.handleAccountTransaction(data);
+                break;
             default:
                 console.log('Unknown WebSocket op:', data.op);
+        }
+    },
+
+    handleAccountTransaction(data) {
+        // Handle real-time account tracking transactions
+        if (AppState.accountTracking.enabled && data.tx) {
+            console.log('Account transaction received:', data.tx);
+            AccountTracker.addRealtimeTransaction(data.tx);
+        }
+    },
+
+    subscribeToAccount(address) {
+        if (!this.ws || !AppState.wsConnected) {
+            console.error('WebSocket not connected');
+            return false;
+        }
+
+        try {
+            const message = {
+                op: 'subscribe_account',
+                account: address
+            };
+            this.ws.send(JSON.stringify(message));
+            console.log('Subscribed to account:', address);
+            return true;
+        } catch (error) {
+            console.error('Error subscribing to account:', error);
+            return false;
+        }
+    },
+
+    unsubscribeFromAccount(address) {
+        if (!this.ws || !AppState.wsConnected) {
+            console.error('WebSocket not connected');
+            return false;
+        }
+
+        try {
+            const message = {
+                op: 'unsubscribe_account',
+                account: address
+            };
+            this.ws.send(JSON.stringify(message));
+            console.log('Unsubscribed from account:', address);
+            return true;
+        } catch (error) {
+            console.error('Error unsubscribing from account:', error);
+            return false;
         }
     },
 
@@ -112,8 +169,18 @@ const WebSocketManager = {
         console.log('handleStatsUpdate called, currentPage:', AppState.currentPage);
         if (AppState.currentPage === 'home') {
             console.log('Updating stats display');
+            const previousHeight = AppState.lastHeight;
+            const newHeight = stats.height;
+
             AppState.stats = stats;
+            AppState.lastHeight = newHeight;
             PageManager.updateStats(stats);
+
+            // Recharger les blocs seulement si la hauteur a changé
+            if (previousHeight !== null && newHeight > previousHeight) {
+                console.log(`Height changed from ${previousHeight} to ${newHeight}, reloading blocks`);
+                PageManager.loadLatestBlocks();
+            }
         }
     },
 
@@ -122,11 +189,16 @@ const WebSocketManager = {
         console.log('handleNewEntry called, currentPage:', AppState.currentPage);
         if (AppState.currentPage === 'home') {
             console.log('Adding new entry to blocks');
-            AppState.latestBlocks.unshift(entry);
-            if (AppState.latestBlocks.length > 10) {
-                AppState.latestBlocks.pop();
+
+            // Vérifier si le bloc n'existe pas déjà (éviter les doublons)
+            const existingBlock = AppState.latestBlocks.find(b => b.hash === entry.hash);
+            if (!existingBlock) {
+                AppState.latestBlocks.unshift(entry);
+                // Garder seulement les 10 plus récents (triés par hauteur)
+                AppState.latestBlocks.sort((a, b) => b.header.height - a.header.height);
+                AppState.latestBlocks = AppState.latestBlocks.slice(0, 10);
+                PageManager.renderLatestBlocks(AppState.latestBlocks);
             }
-            PageManager.renderLatestBlocks(AppState.latestBlocks);
         }
     },
 
@@ -235,6 +307,178 @@ const Utils = {
         setTimeout(() => {
             toast.remove();
         }, 3000);
+    }
+};
+
+// Account Tracker - Real-time transaction monitoring
+const AccountTracker = {
+    init() {
+        // Initialize tracking controls on address page
+        const toggleBtn = document.getElementById('toggleTrackingBtn');
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => this.toggleTracking());
+        }
+    },
+
+    toggleTracking() {
+        if (AppState.accountTracking.enabled) {
+            this.stopTracking();
+        } else {
+            this.startTracking();
+        }
+    },
+
+    startTracking() {
+        const address = AppState.currentAddress;
+        if (!address) {
+            Utils.showToast('No address selected', 'error');
+            return;
+        }
+
+        if (!AppState.wsConnected) {
+            Utils.showToast('WebSocket not connected', 'error');
+            return;
+        }
+
+        // Subscribe to account via WebSocket
+        const success = WebSocketManager.subscribeToAccount(address);
+
+        if (success) {
+            AppState.accountTracking.enabled = true;
+            AppState.accountTracking.address = address;
+            AppState.accountTracking.transactions = [];
+
+            // Update UI
+            const toggleBtn = document.getElementById('toggleTrackingBtn');
+            const trackingStatus = document.getElementById('trackingStatus');
+            const realtimeContainer = document.getElementById('realtimeTransactions');
+
+            toggleBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Tracking';
+            toggleBtn.style.background = '#ff6347';
+            toggleBtn.style.color = 'white';
+
+            trackingStatus.style.display = 'block';
+            realtimeContainer.innerHTML = '<div style="text-align: center; padding: 2rem; color: rgba(255, 255, 255, 0.5);"><i class="fas fa-spinner fa-pulse" style="font-size: 2rem;"></i><p style="margin-top: 1rem;">Waiting for transactions...</p></div>';
+
+            Utils.showToast('Real-time tracking started', 'success');
+        }
+    },
+
+    stopTracking() {
+        const address = AppState.accountTracking.address;
+        if (address) {
+            WebSocketManager.unsubscribeFromAccount(address);
+        }
+
+        AppState.accountTracking.enabled = false;
+        AppState.accountTracking.address = null;
+        AppState.accountTracking.transactions = [];
+
+        // Update UI
+        const toggleBtn = document.getElementById('toggleTrackingBtn');
+        const trackingStatus = document.getElementById('trackingStatus');
+        const realtimeContainer = document.getElementById('realtimeTransactions');
+
+        toggleBtn.innerHTML = '<i class="fas fa-play"></i> Start Tracking';
+        toggleBtn.style.background = 'rgb(24, 255, 178)';
+        toggleBtn.style.color = '#141428';
+
+        trackingStatus.style.display = 'none';
+        realtimeContainer.innerHTML = '<div style="text-align: center; padding: 2rem; color: rgba(255, 255, 255, 0.5);"><i class="fas fa-play-circle" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.3;"></i><p>Click "Start Tracking" to monitor transactions for this address in real-time</p></div>';
+
+        Utils.showToast('Tracking stopped', 'success');
+    },
+
+    addRealtimeTransaction(tx) {
+        // Add transaction to the beginning of the array
+        AppState.accountTracking.transactions.unshift(tx);
+
+        // Keep only last 50 transactions
+        if (AppState.accountTracking.transactions.length > 50) {
+            AppState.accountTracking.transactions.pop();
+        }
+
+        // Update display
+        this.renderRealtimeTransactions();
+    },
+
+    renderRealtimeTransactions() {
+        const container = document.getElementById('realtimeTransactions');
+        const transactions = AppState.accountTracking.transactions;
+
+        if (!transactions || transactions.length === 0) {
+            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: rgba(255, 255, 255, 0.5);"><i class="fas fa-spinner fa-pulse" style="font-size: 2rem;"></i><p style="margin-top: 1rem;">Waiting for transactions...</p></div>';
+            return;
+        }
+
+        const html = `
+            <div style="margin-bottom: 1rem; color: rgba(255, 255, 255, 0.7);">
+                <i class="fas fa-check-circle" style="color: rgb(24, 255, 178);"></i>
+                <strong>${transactions.length}</strong> transaction${transactions.length > 1 ? 's' : ''} tracked
+            </div>
+            <div class="transactions-list">
+                ${transactions.map(tx => {
+                    if (!tx.tx || !tx.tx.action) return '';
+
+                    const action = tx.tx.action;
+                    const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
+
+                    // Get status
+                    let txStatus = 'pending';
+                    let statusColor = '#ffa500';
+                    if (tx.result && tx.result.error) {
+                        txStatus = tx.result.error;
+                        const isSuccess = txStatus === 'ok' || txStatus === ':ok';
+                        statusColor = isSuccess ? '#32cd32' : '#ff6347';
+                    } else if (tx.receipt && tx.receipt.result) {
+                        txStatus = tx.receipt.result;
+                        const isSuccess = txStatus === 'ok' || txStatus === ':ok';
+                        statusColor = isSuccess ? '#32cd32' : '#ff6347';
+                    }
+
+                    let amount = '';
+                    let recipient = '';
+
+                    if (isTransfer && action.args.length >= 2) {
+                        const amountValue = action.args[1];
+                        const symbol = action.args[2] || 'AMA';
+                        try {
+                            amount = `${parseFloat(amountValue) / 1e9} ${symbol}`;
+                            recipient = action.args[0] ? Utils.formatHash(action.args[0], 12) : '';
+                        } catch (e) {
+                            amount = `${amountValue} ${symbol}`;
+                        }
+                    }
+
+                    const timestamp = tx.tx.nonce ? new Date(tx.tx.nonce / 1000000).toLocaleTimeString() : 'Just now';
+
+                    return `
+                        <div class="transaction-item" onclick="SearchManager.showTransactionFromHash('${tx.hash}')" style="border-left: 3px solid ${statusColor}; animation: slideInRight 0.3s ease;">
+                            <div class="tx-main-info">
+                                <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
+                                <div class="tx-function">${action.function}</div>
+                                <span style="font-size: 0.8em; color: ${statusColor}; margin-left: 0.5rem;">${txStatus.replace(/^:/, '').toUpperCase()}</span>
+                            </div>
+                            <div class="tx-details">
+                                ${isTransfer ?
+                                    `<div>From: <span style="color: rgb(24, 255, 178);">${Utils.formatHash(tx.tx.signer, 12)}</span></div>
+                                     ${recipient ? `<div>To: <span style="color: rgb(24, 255, 178);">${Utils.formatHash(recipient, 12)}</span></div>` : ''}` :
+                                    `<div>Signer: <span style="color: rgb(24, 255, 178);">${Utils.formatHash(tx.tx.signer, 12)}</span></div>`
+                                }
+                                <div class="tx-contract">${action.contract}</div>
+                            </div>
+                            <div class="tx-meta">
+                                ${amount ? `<div class="tx-amount">${amount}</div>` : ''}
+                                ${tx.result && tx.result.exec_used ? `<div style="font-size: 0.8em; color: rgb(255, 193, 7);">Gas: ${(tx.result.exec_used / 1e9).toFixed(4)}</div>` : ''}
+                                <div class="tx-time">${timestamp}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+
+        container.innerHTML = html;
     }
 };
 
@@ -369,6 +613,11 @@ const PageManager = {
     },
 
     showPage(pageName, updateUrl = true, params = null) {
+        // Stop account tracking if leaving address page
+        if (AppState.currentPage === 'address' && pageName !== 'address' && AppState.accountTracking.enabled) {
+            AccountTracker.stopTracking();
+        }
+
         // Cacher toutes les pages
         document.querySelectorAll('.page').forEach(page => {
             page.classList.remove('active');
@@ -523,6 +772,8 @@ const PageManager = {
             // Charger les statistiques
             const statsData = await API.getStats();
             if (statsData.stats) {
+                AppState.stats = statsData.stats;
+                AppState.lastHeight = statsData.stats.height;  // Initialiser la hauteur
                 this.updateStats(statsData.stats);
             }
 
@@ -683,9 +934,11 @@ const PageManager = {
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
             // Extraire et formater le statut
-            let txStatus = 'unknown';
+            let txStatus = 'pending';
             if (tx.result && tx.result.error) {
                 txStatus = tx.result.error;
+            } else if (tx.receipt && tx.receipt.result) {
+                txStatus = tx.receipt.result;
             }
             const isSuccess = txStatus === 'ok' || txStatus === ':ok';
 
@@ -951,7 +1204,7 @@ const PageManager = {
                                     </div>
                                     <div class="tx-meta">
                                         ${amount ? `<div class="tx-amount">${amount}</div>` : ''}
-                                        <div class="tx-time">${tx.metadata?.entry_slot ? 'Slot ' + tx.metadata.entry_slot : '-'}</div>
+                                        <div class="tx-time">${tx.metadata?.entry_height ? 'Slot ' + tx.metadata.entry_height : '-'}</div>
                                     </div>
                                 </div>
                             `;
@@ -1837,6 +2090,24 @@ const PageManager = {
         container.innerHTML = tableHtml;
     },
 
+    // Helper pour déduire le type de transaction
+    deduceTxType(tx, currentAddress) {
+        if (tx.metadata?.tx_event) {
+            return tx.metadata.tx_event;
+        }
+        if (currentAddress) {
+            if (tx.tx.signer === currentAddress) {
+                return 'sent';
+            }
+            const action = tx.tx.action;
+            const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
+            if (isTransfer && action.args.length > 0 && action.args[0] === currentAddress) {
+                return 'recv';
+            }
+        }
+        return 'transaction';
+    },
+
     async loadAddressTransactions(address, type = 'all', limit = 50) {
         const container = document.getElementById('addressTransactions');
         container.innerHTML = '<div class="loading">Chargement des transactions...</div>';
@@ -1880,12 +2151,14 @@ const PageManager = {
         const html = transactions.filter(tx => tx.tx && tx.tx.action).map(tx => {
             const action = tx.tx.action;
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
-            const txType = tx.metadata?.tx_event || 'unknown';
+            const txType = this.deduceTxType(tx, AppState.currentAddress);
 
             // Extraire et formater le statut
-            let txStatus = 'unknown';
+            let txStatus = 'pending';
             if (tx.result && tx.result.error) {
                 txStatus = tx.result.error;
+            } else if (tx.receipt && tx.receipt.result) {
+                txStatus = tx.receipt.result;
             }
             const isSuccess = txStatus === 'ok' || txStatus === ':ok';
 
@@ -1922,8 +2195,8 @@ const PageManager = {
                     <div class="tx-main-info">
                         <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
                         <div style="display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start;">
-                            <span class="tx-type ${txType}" style="display: inline-block; width: auto;">${txType === 'sent' ? 'Sent' : txType === 'recv' ? 'Received' : 'Transaction'}</span>
-                            ${tx.metadata?.entry_slot ? `<span style="font-size: 0.8em; color: #b3b3b3;">${
+                            <span class="tx-type ${txType}" style="display: inline-block; width: auto;">${txType === 'sent' ? 'Sent' : txType === 'recv' ? 'Received' : action.function}</span>
+                            ${tx.metadata?.entry_height ? `<span style="font-size: 0.8em; color: #b3b3b3;">${
                                 (tx.tx && tx.tx.nonce) ?
                                     new Date(tx.tx.nonce / 1000000).toLocaleString('fr-FR', {
                                         day: '2-digit',
@@ -1942,7 +2215,7 @@ const PageManager = {
                                         minute: '2-digit',
                                         second: '2-digit'
                                     }) :
-                                    Utils.formatSlotToDateTime(tx.metadata.entry_slot)
+                                    Utils.formatSlotToDateTime(tx.metadata.entry_height)
                             }</span>` : ''}
                         </div>
                     </div>
@@ -1952,7 +2225,7 @@ const PageManager = {
                     </div>
                     <div class="tx-meta">
                         ${amount ? `<div class="tx-amount">${amount}</div>` : ''}
-                        <div class="tx-time">${tx.metadata?.entry_slot ? 'Slot ' + tx.metadata.entry_slot : '-'}</div>
+                        <div class="tx-time">${tx.metadata?.entry_height ? 'Slot ' + tx.metadata.entry_height : '-'}</div>
                     </div>
                 </div>
             `;
@@ -1962,8 +2235,8 @@ const PageManager = {
     },
 
     updateTransactionStats(transactions) {
-        const sentCount = transactions.filter(tx => tx.metadata?.tx_event === 'sent').length;
-        const recvCount = transactions.filter(tx => tx.metadata?.tx_event === 'recv').length;
+        const sentCount = transactions.filter(tx => this.deduceTxType(tx, AppState.currentAddress) === 'sent').length;
+        const recvCount = transactions.filter(tx => this.deduceTxType(tx, AppState.currentAddress) === 'recv').length;
         const totalCount = transactions.length;
 
         document.getElementById('sentTxCount').textContent = sentCount;
@@ -2108,9 +2381,11 @@ const BlockExplorer = {
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
             // Extraire et formater le statut
-            let txStatus = 'unknown';
+            let txStatus = 'pending';
             if (tx.result && tx.result.error) {
                 txStatus = tx.result.error;
+            } else if (tx.receipt && tx.receipt.result) {
+                txStatus = tx.receipt.result;
             }
             const isSuccess = txStatus === 'ok' || txStatus === ':ok';
 
@@ -2602,9 +2877,11 @@ const SearchManager = {
         const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
         // Extraire et formater le statut de la transaction
-        let txStatus = 'unknown';
+        let txStatus = 'pending';
         if (tx.result && tx.result.error) {
             txStatus = tx.result.error;
+        } else if (tx.receipt && tx.receipt.result) {
+            txStatus = tx.receipt.result;
         }
 
         const isSuccess = txStatus === 'ok' || txStatus === ':ok';
@@ -2671,7 +2948,7 @@ const SearchManager = {
                                 ${formattedAmount}
                             </span>
                         </div>
-                        ${tx.metadata && tx.metadata.entry_slot ? `
+                        ${tx.metadata && tx.metadata.entry_height ? `
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
                             <strong>Date:</strong>
                             <span style="color: #b3b3b3;">
@@ -2684,7 +2961,7 @@ const SearchManager = {
                                         minute: '2-digit',
                                         second: '2-digit'
                                     }) :
-                                    Utils.formatSlotToDateTime(tx.metadata.entry_slot)
+                                    Utils.formatSlotToDateTime(tx.metadata.entry_height)
                                 }
                             </span>
                         </div>` : ''}
@@ -2693,9 +2970,45 @@ const SearchManager = {
             `;
         }
 
+        // Format execution info section
+        let executionInfo = '';
+        if (tx.result) {
+            const hasExecUsed = tx.result.exec_used !== undefined;
+            const hasLogs = tx.result.logs && tx.result.logs.length > 0;
+
+            if (hasExecUsed || hasLogs) {
+                executionInfo = `
+                    <div style="background: rgba(255, 193, 7, 0.1); padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+                        <h3 style="margin: 0 0 1rem 0; color: rgb(255, 193, 7);"><i class="fas fa-tachometer-alt"></i> Execution Details</h3>
+                        <div style="display: grid; gap: 0.75rem;">
+                            ${hasExecUsed ? `
+                                <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
+                                    <strong>Gas Used:</strong>
+                                    <span style="font-family: monospace; color: rgb(255, 193, 7);">${(tx.result.exec_used / 1e9).toFixed(6)} AMA</span>
+                                </div>
+                            ` : ''}
+                            ${hasLogs ? `
+                                <div style="display: grid; gap: 0.5rem;">
+                                    <strong>Logs:</strong>
+                                    <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 6px; border-left: 3px solid rgb(255, 193, 7);">
+                                        ${tx.result.logs.map((log, idx) => `
+                                            <div style="font-family: monospace; font-size: 0.9em; padding: 0.25rem 0; color: #e0e0e0;">
+                                                <span style="color: rgb(255, 193, 7); margin-right: 0.5rem;">[${idx + 1}]</span>${log}
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
         const html = `
             <h2>Transaction Details</h2>
             ${transferInfo}
+            ${executionInfo}
             <div style="margin: 2rem 0;">
                 <div style="display: grid; gap: 1rem;">
                     <div><strong>Hash:</strong> <span onclick="SearchManager.goToTransactionPage('${tx.hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour aller à la page de la transaction">${tx.hash}</span></div>
@@ -2704,7 +3017,7 @@ const SearchManager = {
                     <div><strong>Nonce:</strong> ${tx.tx.nonce}</div>
                     <div><strong>Contract:</strong> ${action.contract}</div>
                     <div><strong>Function:</strong> ${action.function}</div>
-                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="SearchManager.goToBlockBySlot(${tx.metadata.entry_slot})" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour voir les détails du bloc">${tx.metadata.entry_slot}</span></div>` : ''}
+                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="SearchManager.goToBlockBySlot(${tx.metadata.entry_height})" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour voir les détails du bloc">${tx.metadata.entry_height}</span></div>` : ''}
                 </div>
             </div>
 
@@ -2775,6 +3088,7 @@ document.addEventListener('DOMContentLoaded', () => {
     SearchManager.init();
     ModalManager.init();
     WebSocketManager.init();
+    AccountTracker.init();
 
     // Rafraîchissement automatique désactivé (WebSocket prend le relais)
     // setInterval(() => {
