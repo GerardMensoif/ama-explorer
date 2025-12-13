@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Amadeus Explorer</title>
+    <title>Amadeus Blockchain Explorer</title>
     <link rel="stylesheet" href="/styles.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -399,6 +399,28 @@
                                 <span>Received transactions:</span>
                                 <span id="receivedTxCount">-</span>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Real-time Account Tracking -->
+            <div class="card" style="margin-top: 2rem;">
+                <div class="card-header">
+                    <h2><i class="fas fa-satellite-dish"></i> Real-time Tracking</h2>
+                    <button id="toggleTrackingBtn" class="tracking-btn" style="background: rgb(24, 255, 178); color: #141428; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-weight: bold;">
+                        <i class="fas fa-play"></i> Start Tracking
+                    </button>
+                </div>
+                <div class="card-content">
+                    <div id="trackingStatus" style="padding: 1rem; background: rgba(255, 193, 7, 0.1); border-radius: 6px; margin-bottom: 1rem; display: none;">
+                        <i class="fas fa-info-circle" style="color: rgb(255, 193, 7);"></i>
+                        <span style="margin-left: 0.5rem; color: rgb(255, 193, 7);">Monitoring transactions for this address in real-time...</span>
+                    </div>
+                    <div id="realtimeTransactions">
+                        <div style="text-align: center; padding: 2rem; color: rgba(255, 255, 255, 0.5);">
+                            <i class="fas fa-play-circle" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.3;"></i>
+                            <p>Click "Start Tracking" to monitor transactions for this address in real-time</p>
                         </div>
                     </div>
                 </div>

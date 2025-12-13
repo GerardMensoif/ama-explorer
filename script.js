@@ -263,6 +263,41 @@ const Utils = {
         return hash.substring(0, length) + '...' + hash.substring(hash.length - length);
     },
 
+    // Get transaction status from result (supports both old and new format)
+    getTransactionStatus(txResult) {
+        if (!txResult) {
+            return {
+                isSuccess: false,
+                statusMessage: 'unknown',
+                statusColor: '#b3b3b3'
+            };
+        }
+
+        // New format: uses 'success' boolean and 'result' for message
+        if (txResult.success !== undefined) {
+            return {
+                isSuccess: txResult.success,
+                statusMessage: txResult.result || (txResult.success ? 'ok' : 'error'),
+                statusColor: txResult.success ? '#32cd32' : '#ff6347'
+            };
+        }
+
+        // Old format: uses 'error' field with 'ok' or ':ok' for success
+        if (txResult.error) {
+            const isSuccess = txResult.error === 'ok' || txResult.error === ':ok';
+            return {
+                isSuccess: isSuccess,
+                statusMessage: txResult.error,
+                statusColor: isSuccess ? '#32cd32' : '#ff6347'
+            };
+        }
+
+        return {
+            isSuccess: false,
+            statusMessage: 'unknown',
+            statusColor: '#b3b3b3'
+        };
+    },
 
     // Copier dans le presse-papier
     async copyToClipboard(text) {
@@ -423,18 +458,10 @@ const AccountTracker = {
                     const action = tx.tx.action;
                     const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
-                    // Get status
-                    let txStatus = 'pending';
-                    let statusColor = '#ffa500';
-                    if (tx.result && tx.result.error) {
-                        txStatus = tx.result.error;
-                        const isSuccess = txStatus === 'ok' || txStatus === ':ok';
-                        statusColor = isSuccess ? '#32cd32' : '#ff6347';
-                    } else if (tx.receipt && tx.receipt.result) {
-                        txStatus = tx.receipt.result;
-                        const isSuccess = txStatus === 'ok' || txStatus === ':ok';
-                        statusColor = isSuccess ? '#32cd32' : '#ff6347';
-                    }
+                    // Get status (supports both old and new format)
+                    const status = Utils.getTransactionStatus(tx.receipt || tx.result);
+                    const txStatus = status.statusMessage;
+                    const statusColor = status.statusColor;
 
                     let amount = '';
                     let recipient = '';
@@ -469,7 +496,7 @@ const AccountTracker = {
                             </div>
                             <div class="tx-meta">
                                 ${amount ? `<div class="tx-amount">${amount}</div>` : ''}
-                                ${tx.result && tx.result.exec_used ? `<div style="font-size: 0.8em; color: rgb(255, 193, 7);">Gas: ${(tx.result.exec_used / 1e9).toFixed(4)}</div>` : ''}
+                                ${(tx.receipt || tx.result) && (tx.receipt || tx.result).exec_used ? `<div style="font-size: 0.8em; color: rgb(255, 193, 7);">Gas: ${((tx.receipt || tx.result).exec_used / 1e9).toFixed(4)}</div>` : ''}
                                 <div class="tx-time">${timestamp}</div>
                             </div>
                         </div>
@@ -933,14 +960,10 @@ const PageManager = {
             const action = tx.tx.action;
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
-            // Extraire et formater le statut
-            let txStatus = 'pending';
-            if (tx.result && tx.result.error) {
-                txStatus = tx.result.error;
-            } else if (tx.receipt && tx.receipt.result) {
-                txStatus = tx.receipt.result;
-            }
-            const isSuccess = txStatus === 'ok' || txStatus === ':ok';
+            // Extraire et formater le statut (supports both old and new format)
+            const status = Utils.getTransactionStatus(tx.receipt || tx.result);
+            const txStatus = status.statusMessage;
+            const isSuccess = status.isSuccess;
 
             const formatStatus = (status) => {
                 if (status === 'ok' || status === ':ok') return 'OK';
@@ -1204,7 +1227,7 @@ const PageManager = {
                                     </div>
                                     <div class="tx-meta">
                                         ${amount ? `<div class="tx-amount">${amount}</div>` : ''}
-                                        <div class="tx-time">${tx.metadata?.entry_height ? 'Slot ' + tx.metadata.entry_height : '-'}</div>
+                                        <div class="tx-time">${tx.metadata?.entry_slot ? 'Slot ' + tx.metadata.entry_slot : '-'}</div>
                                     </div>
                                 </div>
                             `;
@@ -2090,24 +2113,6 @@ const PageManager = {
         container.innerHTML = tableHtml;
     },
 
-    // Helper pour déduire le type de transaction
-    deduceTxType(tx, currentAddress) {
-        if (tx.metadata?.tx_event) {
-            return tx.metadata.tx_event;
-        }
-        if (currentAddress) {
-            if (tx.tx.signer === currentAddress) {
-                return 'sent';
-            }
-            const action = tx.tx.action;
-            const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
-            if (isTransfer && action.args.length > 0 && action.args[0] === currentAddress) {
-                return 'recv';
-            }
-        }
-        return 'transaction';
-    },
-
     async loadAddressTransactions(address, type = 'all', limit = 50) {
         const container = document.getElementById('addressTransactions');
         container.innerHTML = '<div class="loading">Chargement des transactions...</div>';
@@ -2151,16 +2156,12 @@ const PageManager = {
         const html = transactions.filter(tx => tx.tx && tx.tx.action).map(tx => {
             const action = tx.tx.action;
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
-            const txType = this.deduceTxType(tx, AppState.currentAddress);
+            const txType = tx.metadata?.tx_event || 'unknown';
 
-            // Extraire et formater le statut
-            let txStatus = 'pending';
-            if (tx.result && tx.result.error) {
-                txStatus = tx.result.error;
-            } else if (tx.receipt && tx.receipt.result) {
-                txStatus = tx.receipt.result;
-            }
-            const isSuccess = txStatus === 'ok' || txStatus === ':ok';
+            // Extraire et formater le statut (supports both old and new format)
+            const status = Utils.getTransactionStatus(tx.receipt || tx.result);
+            const txStatus = status.statusMessage;
+            const isSuccess = status.isSuccess;
 
             const formatStatus = (status) => {
                 if (status === 'ok' || status === ':ok') return 'OK';
@@ -2195,8 +2196,8 @@ const PageManager = {
                     <div class="tx-main-info">
                         <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
                         <div style="display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start;">
-                            <span class="tx-type ${txType}" style="display: inline-block; width: auto;">${txType === 'sent' ? 'Sent' : txType === 'recv' ? 'Received' : action.function}</span>
-                            ${tx.metadata?.entry_height ? `<span style="font-size: 0.8em; color: #b3b3b3;">${
+                            <span class="tx-type ${txType}" style="display: inline-block; width: auto;">${txType === 'sent' ? 'Sent' : txType === 'recv' ? 'Received' : 'Transaction'}</span>
+                            ${tx.metadata?.entry_slot ? `<span style="font-size: 0.8em; color: #b3b3b3;">${
                                 (tx.tx && tx.tx.nonce) ?
                                     new Date(tx.tx.nonce / 1000000).toLocaleString('fr-FR', {
                                         day: '2-digit',
@@ -2215,7 +2216,7 @@ const PageManager = {
                                         minute: '2-digit',
                                         second: '2-digit'
                                     }) :
-                                    Utils.formatSlotToDateTime(tx.metadata.entry_height)
+                                    Utils.formatSlotToDateTime(tx.metadata.entry_slot)
                             }</span>` : ''}
                         </div>
                     </div>
@@ -2225,7 +2226,7 @@ const PageManager = {
                     </div>
                     <div class="tx-meta">
                         ${amount ? `<div class="tx-amount">${amount}</div>` : ''}
-                        <div class="tx-time">${tx.metadata?.entry_height ? 'Slot ' + tx.metadata.entry_height : '-'}</div>
+                        <div class="tx-time">${tx.metadata?.entry_slot ? 'Slot ' + tx.metadata.entry_slot : '-'}</div>
                     </div>
                 </div>
             `;
@@ -2235,8 +2236,8 @@ const PageManager = {
     },
 
     updateTransactionStats(transactions) {
-        const sentCount = transactions.filter(tx => this.deduceTxType(tx, AppState.currentAddress) === 'sent').length;
-        const recvCount = transactions.filter(tx => this.deduceTxType(tx, AppState.currentAddress) === 'recv').length;
+        const sentCount = transactions.filter(tx => tx.metadata?.tx_event === 'sent').length;
+        const recvCount = transactions.filter(tx => tx.metadata?.tx_event === 'recv').length;
         const totalCount = transactions.length;
 
         document.getElementById('sentTxCount').textContent = sentCount;
@@ -2380,14 +2381,10 @@ const BlockExplorer = {
             const action = tx.tx.action;
             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
-            // Extraire et formater le statut
-            let txStatus = 'pending';
-            if (tx.result && tx.result.error) {
-                txStatus = tx.result.error;
-            } else if (tx.receipt && tx.receipt.result) {
-                txStatus = tx.receipt.result;
-            }
-            const isSuccess = txStatus === 'ok' || txStatus === ':ok';
+            // Extraire et formater le statut (supports both old and new format)
+            const status = Utils.getTransactionStatus(tx.receipt || tx.result);
+            const txStatus = status.statusMessage;
+            const isSuccess = status.isSuccess;
 
             const formatStatus = (status) => {
                 if (status === 'ok' || status === ':ok') return 'OK';
@@ -2876,15 +2873,10 @@ const SearchManager = {
         const action = tx.tx.action;
         const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
-        // Extraire et formater le statut de la transaction
-        let txStatus = 'pending';
-        if (tx.result && tx.result.error) {
-            txStatus = tx.result.error;
-        } else if (tx.receipt && tx.receipt.result) {
-            txStatus = tx.receipt.result;
-        }
-
-        const isSuccess = txStatus === 'ok' || txStatus === ':ok';
+        // Extraire et formater le statut de la transaction (supports both old and new format)
+        const status = Utils.getTransactionStatus(tx.receipt || tx.result);
+        const txStatus = status.statusMessage;
+        const isSuccess = status.isSuccess;
 
         // Formater le statut pour l'affichage (snake_case -> Title Case)
         const formatStatus = (status) => {
@@ -2948,7 +2940,7 @@ const SearchManager = {
                                 ${formattedAmount}
                             </span>
                         </div>
-                        ${tx.metadata && tx.metadata.entry_height ? `
+                        ${tx.metadata && tx.metadata.entry_slot ? `
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
                             <strong>Date:</strong>
                             <span style="color: #b3b3b3;">
@@ -2961,7 +2953,7 @@ const SearchManager = {
                                         minute: '2-digit',
                                         second: '2-digit'
                                     }) :
-                                    Utils.formatSlotToDateTime(tx.metadata.entry_height)
+                                    Utils.formatSlotToDateTime(tx.metadata.entry_slot)
                                 }
                             </span>
                         </div>` : ''}
@@ -2972,9 +2964,10 @@ const SearchManager = {
 
         // Format execution info section
         let executionInfo = '';
-        if (tx.result) {
-            const hasExecUsed = tx.result.exec_used !== undefined;
-            const hasLogs = tx.result.logs && tx.result.logs.length > 0;
+        const txReceipt = tx.receipt || tx.result;
+        if (txReceipt) {
+            const hasExecUsed = txReceipt.exec_used !== undefined;
+            const hasLogs = txReceipt.logs && txReceipt.logs.length > 0;
 
             if (hasExecUsed || hasLogs) {
                 executionInfo = `
@@ -2984,14 +2977,14 @@ const SearchManager = {
                             ${hasExecUsed ? `
                                 <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
                                     <strong>Gas Used:</strong>
-                                    <span style="font-family: monospace; color: rgb(255, 193, 7);">${(tx.result.exec_used / 1e9).toFixed(6)} AMA</span>
+                                    <span style="font-family: monospace; color: rgb(255, 193, 7);">${(txReceipt.exec_used / 1e9).toFixed(6)} AMA</span>
                                 </div>
                             ` : ''}
                             ${hasLogs ? `
                                 <div style="display: grid; gap: 0.5rem;">
                                     <strong>Logs:</strong>
                                     <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 6px; border-left: 3px solid rgb(255, 193, 7);">
-                                        ${tx.result.logs.map((log, idx) => `
+                                        ${txReceipt.logs.map((log, idx) => `
                                             <div style="font-family: monospace; font-size: 0.9em; padding: 0.25rem 0; color: #e0e0e0;">
                                                 <span style="color: rgb(255, 193, 7); margin-right: 0.5rem;">[${idx + 1}]</span>${log}
                                             </div>
@@ -3017,7 +3010,7 @@ const SearchManager = {
                     <div><strong>Nonce:</strong> ${tx.tx.nonce}</div>
                     <div><strong>Contract:</strong> ${action.contract}</div>
                     <div><strong>Function:</strong> ${action.function}</div>
-                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="SearchManager.goToBlockBySlot(${tx.metadata.entry_height})" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour voir les détails du bloc">${tx.metadata.entry_height}</span></div>` : ''}
+                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="SearchManager.goToBlockBySlot(${tx.metadata.entry_slot})" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour voir les détails du bloc">${tx.metadata.entry_slot}</span></div>` : ''}
                 </div>
             </div>
 
