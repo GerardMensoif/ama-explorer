@@ -1537,7 +1537,7 @@ const PageManager = {
                     backgroundColor: 'rgba(0, 212, 255, 0.1)',
                     fill: true,
                     tension: 0.4,
-                    pointRadius: 2,
+                    pointRadius: 0,
                     pointHoverRadius: 5,
                     borderWidth: 2
                 }]
@@ -1656,7 +1656,7 @@ const PageManager = {
                     backgroundColor: 'rgba(255, 193, 7, 0.1)',
                     fill: true,
                     tension: 0.4,
-                    pointRadius: 2,
+                    pointRadius: 0,
                     pointHoverRadius: 5,
                     borderWidth: 2
                 }]
@@ -1735,6 +1735,21 @@ const PageManager = {
         });
     },
 
+    // Smooth data using moving average
+    smoothData(values, windowSize = 5) {
+        if (values.length < windowSize) return values;
+
+        const smoothed = [];
+        for (let i = 0; i < values.length; i++) {
+            const start = Math.max(0, i - Math.floor(windowSize / 2));
+            const end = Math.min(values.length, i + Math.ceil(windowSize / 2));
+            const window = values.slice(start, end);
+            const avg = window.reduce((sum, val) => sum + val, 0) / window.length;
+            smoothed.push(avg);
+        }
+        return smoothed;
+    },
+
     processChartData(data, period) {
         const now = Date.now();
         let filtered = data;
@@ -1745,13 +1760,30 @@ const PageManager = {
                 filtered = data.filter(entry => now - entry.timestamp <= 24 * 60 * 60 * 1000);
                 break;
             case '7d':
+                filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
+                break;
+            case '30d':
+                filtered = data.filter(entry => now - entry.timestamp <= 30 * 24 * 60 * 60 * 1000);
+                break;
+            case '90d':
+                filtered = data.filter(entry => now - entry.timestamp <= 90 * 24 * 60 * 60 * 1000);
+                break;
             default:
                 filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
                 break;
         }
 
+        // Filter out outliers (PFLOPS > 165 are errors)
+        const cleanData = filtered.map(entry => ({
+            ...entry,
+            pflops: entry.pflops > 165 ? null : entry.pflops
+        })).filter(entry => entry.pflops !== null);
+
+        // Adjust smoothing window based on period
+        const smoothWindow = period === '30d' ? 30 : period === '90d' ? 50 : 10;
+
         return {
-            labels: filtered.map(entry => {
+            labels: cleanData.map(entry => {
                 const date = new Date(entry.timestamp);
                 const now = new Date();
                 const diffHours = (now - date) / (1000 * 60 * 60);
@@ -1769,9 +1801,9 @@ const PageManager = {
                     });
                 }
             }),
-            values: filtered.map(entry => entry.pflops),
-            timestamps: filtered.map(entry => entry.timestamp),
-            heights: filtered.map(entry => entry.height || null)
+            values: this.smoothData(cleanData.map(entry => entry.pflops), smoothWindow),
+            timestamps: cleanData.map(entry => entry.timestamp),
+            heights: cleanData.map(entry => entry.height || null)
         };
     },
 
@@ -1785,6 +1817,14 @@ const PageManager = {
                 filtered = data.filter(entry => now - entry.timestamp <= 24 * 60 * 60 * 1000);
                 break;
             case '7d':
+                filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
+                break;
+            case '30d':
+                filtered = data.filter(entry => now - entry.timestamp <= 30 * 24 * 60 * 60 * 1000);
+                break;
+            case '90d':
+                filtered = data.filter(entry => now - entry.timestamp <= 90 * 24 * 60 * 60 * 1000);
+                break;
             default:
                 filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
                 break;
@@ -1792,6 +1832,9 @@ const PageManager = {
 
         // Always use filtered data but ensure TPS values exist
         const chartEntries = filtered;
+
+        // Adjust smoothing window based on period
+        const smoothWindow = period === '30d' ? 30 : period === '90d' ? 50 : 10;
 
         return {
             labels: chartEntries.map(entry => {
@@ -1812,7 +1855,7 @@ const PageManager = {
                     });
                 }
             }),
-            values: chartEntries.map(entry => entry.txs_per_sec || 0),
+            values: this.smoothData(chartEntries.map(entry => entry.txs_per_sec || 0), smoothWindow),
             timestamps: chartEntries.map(entry => entry.timestamp),
             heights: chartEntries.map(entry => entry.height || null)
         };
