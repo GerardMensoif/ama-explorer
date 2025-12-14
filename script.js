@@ -1227,7 +1227,7 @@ const PageManager = {
                                     </div>
                                     <div class="tx-meta">
                                         ${amount ? `<div class="tx-amount">${amount}</div>` : ''}
-                                        <div class="tx-time">${tx.metadata?.entry_slot ? 'Slot ' + tx.metadata.entry_slot : '-'}</div>
+                                        <div class="tx-time">${tx.tx?.nonce !== undefined ? new Date(tx.tx.nonce / 1000000).toLocaleString() : '-'}</div>
                                     </div>
                                 </div>
                             `;
@@ -2207,8 +2207,8 @@ const PageManager = {
                                         minute: '2-digit',
                                         second: '2-digit'
                                     }) :
-                                    tx.nonce ?
-                                    new Date(tx.nonce / 1000000).toLocaleString('fr-FR', {
+                                    tx.tx.nonce ?
+                                    new Date(tx.tx.nonce / 1000000).toLocaleString('fr-FR', {
                                         day: '2-digit',
                                         month: '2-digit',
                                         year: 'numeric',
@@ -2226,7 +2226,7 @@ const PageManager = {
                     </div>
                     <div class="tx-meta">
                         ${amount ? `<div class="tx-amount">${amount}</div>` : ''}
-                        <div class="tx-time">${tx.metadata?.entry_slot ? 'Slot ' + tx.metadata.entry_slot : '-'}</div>
+                        <div class="tx-time">${tx.tx?.nonce !== undefined ? new Date(tx.tx.nonce / 1000000).toLocaleString() : '-'}</div>
                     </div>
                 </div>
             `;
@@ -3007,10 +3007,11 @@ const SearchManager = {
                     <div><strong>Hash:</strong> <span onclick="SearchManager.goToTransactionPage('${tx.hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour aller à la page de la transaction">${tx.hash}</span></div>
                     <div><strong>Status:</strong> ${statusBadge}</div>
                     ${!isTransfer ? `<div><strong>Signer:</strong> <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 16)}</span></div>` : ''}
+                    <div><strong>Timestamp:</strong> ${tx.tx.nonce ? new Date(tx.tx.nonce / 1000000).toLocaleString() : '-'}</div>
                     <div><strong>Nonce:</strong> ${tx.tx.nonce}</div>
                     <div><strong>Contract:</strong> ${action.contract}</div>
                     <div><strong>Function:</strong> ${action.function}</div>
-                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="SearchManager.goToBlockBySlot(${tx.metadata.entry_slot})" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour voir les détails du bloc">${tx.metadata.entry_slot}</span></div>` : ''}
+                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="SearchManager.goToBlockBySlot(${tx.metadata.entry_height})" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour voir les détails du bloc">${tx.metadata.entry_height}</span></div>` : ''}
                 </div>
             </div>
 
