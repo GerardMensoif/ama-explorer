@@ -680,17 +680,17 @@ const PageManager = {
         switch (pageName) {
             case 'address':
                 if (params && params.address) {
-                    url = `/address/${params.address}`;
+                    url = `/network/address/${params.address}`;
                 }
                 break;
             case 'block':
                 if (params && params.blockNumber) {
-                    url = `/block/${params.blockNumber}`;
+                    url = `/network/tip/${params.blockNumber}`;
                 }
                 break;
             case 'transaction':
                 if (params && params.txHash) {
-                    url = `/transaction/${params.txHash}`;
+                    url = `/network/tx/${params.txHash}`;
                 }
                 break;
             case 'home':
@@ -717,6 +717,25 @@ const PageManager = {
             return { page: 'home', params: null };
         }
 
+        // New format: /network/type/value (3 parts)
+        if (pathParts.length === 3 && pathParts[0] === 'network') {
+            const [, type, value] = pathParts;
+
+            if (type === 'address') {
+                AppState.currentAddress = value;
+                return { page: 'address', params: { address: value } };
+            }
+
+            if (type === 'tip') {
+                return { page: 'block', params: { blockNumber: value } };
+            }
+
+            if (type === 'tx') {
+                return { page: 'transaction', params: { txHash: value } };
+            }
+        }
+
+        // Old format: /type/value (2 parts) - keep for backward compatibility
         if (pathParts.length === 2) {
             const [type, value] = pathParts;
 
@@ -725,7 +744,7 @@ const PageManager = {
                 return { page: 'address', params: { address: value } };
             }
 
-            if (type === 'block') {
+            if (type === 'block' || type === 'tip') {
                 return { page: 'block', params: { blockNumber: value } };
             }
 
@@ -2025,8 +2044,32 @@ const PageManager = {
 
         try {
             // Charger les balances
-            const balanceData = await API.getAllBalances(address);
-            this.renderAddressBalances(balanceData.balances || []);
+            let balances = [];
+            try {
+                const balanceData = await API.getAllBalances(address);
+                balances = balanceData.balances || [];
+
+                // Fallback: if balance_all returns empty, try balance for AMA
+                if (balances.length === 0) {
+                    const amaBalance = await API.getBalance(address, 'AMA');
+                    if (amaBalance && amaBalance.balance) {
+                        balances = [amaBalance.balance];
+                    }
+                }
+            } catch (balanceError) {
+                console.warn('balance_all failed, trying balance for AMA:', balanceError);
+                // Fallback to single balance API
+                try {
+                    const amaBalance = await API.getBalance(address, 'AMA');
+                    if (amaBalance && amaBalance.balance) {
+                        balances = [amaBalance.balance];
+                    }
+                } catch (fallbackError) {
+                    console.error('All balance APIs failed:', fallbackError);
+                }
+            }
+
+            this.renderAddressBalances(balances);
 
             // Charger les transactions
             await this.loadAddressTransactions(address, 'all', 50);
@@ -2053,9 +2096,32 @@ const PageManager = {
                 const typeFilter = document.getElementById('txTypeFilter');
                 const limitFilter = document.getElementById('txLimitFilter');
 
-                // Reload balances
-                const balanceData = await API.getAllBalances(address);
-                this.renderAddressBalances(balanceData.balances || []);
+                // Reload balances with fallback
+                let balances = [];
+                try {
+                    const balanceData = await API.getAllBalances(address);
+                    balances = balanceData.balances || [];
+
+                    // Fallback: if balance_all returns empty, try balance for AMA
+                    if (balances.length === 0) {
+                        const amaBalance = await API.getBalance(address, 'AMA');
+                        if (amaBalance && amaBalance.balance) {
+                            balances = [amaBalance.balance];
+                        }
+                    }
+                } catch (balanceError) {
+                    console.warn('balance_all failed, trying balance for AMA:', balanceError);
+                    try {
+                        const amaBalance = await API.getBalance(address, 'AMA');
+                        if (amaBalance && amaBalance.balance) {
+                            balances = [amaBalance.balance];
+                        }
+                    } catch (fallbackError) {
+                        console.error('All balance APIs failed:', fallbackError);
+                    }
+                }
+
+                this.renderAddressBalances(balances);
 
                 // Reload transactions
                 await this.loadAddressTransactions(address, typeFilter.value, parseInt(limitFilter.value));
@@ -2639,12 +2705,13 @@ const SearchManager = {
     },
 
     detectSearchType(query) {
-        if (/^\d+$/.test(query)) {
-            return 'block';
+        // Check address length first (before checking if it's only digits)
+        if (query.length === 98 || query.length === 48 || query.length === 47 || query.length === 66) {
+            return 'address';
         } else if (query.length === 64 || query.length === 44) {
             return 'hash';
-        } else if (query.length === 98 || query.length === 48 || query.length === 66) {
-            return 'address';
+        } else if (/^\d+$/.test(query)) {
+            return 'block';
         }
         return 'unknown';
     },
@@ -2790,16 +2857,16 @@ const SearchManager = {
             // Ajouter à l'historique de recherche
             this.addToRecentSearches(trimmedQuery);
 
-            // Détecter le type de recherche
-            if (/^\d+$/.test(trimmedQuery)) {
-                console.log('Detected as block height');
-                await this.searchBlockByHeight(parseInt(trimmedQuery));
+            // Détecter le type de recherche - check address length first before checking if it's all digits
+            if (trimmedQuery.length === 98 || trimmedQuery.length === 48 || trimmedQuery.length === 47 || trimmedQuery.length === 66) {
+                console.log('Detected as address');
+                await this.searchAddress(trimmedQuery);
             } else if (trimmedQuery.length === 64 || trimmedQuery.length === 44) {
                 console.log('Detected as hash');
                 await this.searchByHash(trimmedQuery);
-            } else if (trimmedQuery.length === 98 || trimmedQuery.length === 48 || trimmedQuery.length === 66) {
-                console.log('Detected as address');
-                await this.searchAddress(trimmedQuery);
+            } else if (/^\d+$/.test(trimmedQuery)) {
+                console.log('Detected as block height');
+                await this.searchBlockByHeight(parseInt(trimmedQuery));
             } else {
                 console.log('Unrecognized format, length:', trimmedQuery.length);
                 Utils.showToast(`Unrecognized search format (${trimmedQuery.length} characters)`, 'error');
