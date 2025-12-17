@@ -2,6 +2,39 @@
 const API_BASE = 'https://nodes.amadeus.bot';
 const WS_URL = 'wss://nodes.amadeus.bot/ws/rpc';
 
+// Auto-update system - checks for new version every 3 minutes
+(function() {
+    const CHECK_INTERVAL = 3 * 60 * 1000; // 3 minutes
+    let currentVersion = localStorage.getItem('app_version');
+
+    async function checkVersion() {
+        try {
+            const response = await fetch('/version.json?t=' + Date.now());
+            const data = await response.json();
+            const newVersion = data.timestamp.toString();
+
+            if (!currentVersion) {
+                // First load, save current version
+                localStorage.setItem('app_version', newVersion);
+                currentVersion = newVersion;
+            } else if (currentVersion !== newVersion) {
+                // Version changed, force reload
+                console.log('New version detected, reloading...');
+                localStorage.setItem('app_version', newVersion);
+                window.location.reload(true);
+            }
+        } catch (error) {
+            console.error('Version check failed:', error);
+        }
+    }
+
+    // Check on load
+    checkVersion();
+
+    // Check every 3 minutes
+    setInterval(checkVersion, CHECK_INTERVAL);
+})();
+
 // État global de l'application
 const AppState = {
     currentPage: 'home',
@@ -31,6 +64,7 @@ const WebSocketManager = {
     reconnectTimeout: null,
     rejoined: false,
     startTime: null,
+    renderBlocksTimeout: null,
 
     init() {
         this.connect();
@@ -193,12 +227,17 @@ const WebSocketManager = {
             // Vérifier si le bloc n'existe pas déjà (éviter les doublons)
             const existingBlock = AppState.latestBlocks.find(b => b.hash === entry.hash);
             if (!existingBlock) {
-                AppState.latestBlocks.unshift(entry);
-                // Garder seulement les 10 plus récents (triés par hauteur)
+                AppState.latestBlocks.push(entry);
+            }
+
+            // Debounce render to avoid flickering when multiple blocks arrive quickly
+            clearTimeout(this.renderBlocksTimeout);
+            this.renderBlocksTimeout = setTimeout(() => {
+                // Sort by height descending and keep only top 10
                 AppState.latestBlocks.sort((a, b) => b.header.height - a.header.height);
                 AppState.latestBlocks = AppState.latestBlocks.slice(0, 10);
                 PageManager.renderLatestBlocks(AppState.latestBlocks);
-            }
+            }, 200); // Wait 200ms for multiple blocks to arrive
         }
     },
 
@@ -874,14 +913,23 @@ const PageManager = {
                 try {
                     const blockData = await API.request(`/api/chain/height/${height}`);
                     if (blockData.entries && blockData.entries.length > 0) {
-                        blocks.push(blockData.entries[0]);
+                        // Check if block already exists (from WebSocket)
+                        const existingBlock = AppState.latestBlocks.find(b => b.hash === blockData.entries[0].hash);
+                        if (!existingBlock) {
+                            blocks.push(blockData.entries[0]);
+                        }
                     }
                 } catch (error) {
                     console.warn(`Impossible de charger le block ${height}:`, error);
                 }
             }
 
-            await this.renderLatestBlocks(blocks.slice(0, 10));
+            // Merge with existing blocks from WebSocket and sort
+            AppState.latestBlocks = [...AppState.latestBlocks, ...blocks];
+            AppState.latestBlocks.sort((a, b) => b.header.height - a.header.height);
+            AppState.latestBlocks = AppState.latestBlocks.slice(0, 10);
+
+            await this.renderLatestBlocks(AppState.latestBlocks);
         } catch (error) {
             console.error('Error loading latest blocks:', error);
         }
