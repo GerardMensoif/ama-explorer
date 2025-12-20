@@ -2944,16 +2944,25 @@ const SearchManager = {
 
     async searchByHash(hash) {
         try {
-            // Essayer en tant que transaction
+            // Try as transaction first
             const txData = await API.getTransaction(hash);
             if (txData) {
                 this.showTransactionModal(txData);
                 return;
             }
-        } catch (error) {
-            // Pas une transaction - pour les blocks, il faudrait connaître la hauteur
-            Utils.showToast('Hash not found or block search by hash not supported', 'error');
-            console.log('Hash search failed - if this is a block hash, try searching by block height instead');
+        } catch (txError) {
+            // Not a transaction, try as block hash
+            try {
+                const blockData = await API.getEntry(hash);
+                if (blockData && blockData.entry) {
+                    BlockExplorer.renderBlockModal(blockData.entry);
+                    document.getElementById('modal').style.display = 'block';
+                    return;
+                }
+            } catch (blockError) {
+                Utils.showToast('Hash not found', 'error');
+                console.error('Hash search failed:', blockError);
+            }
         }
     },
 
