@@ -1276,7 +1276,14 @@ const PageManager = {
                 }
             }
 
-            this.renderTransactionsPage(allTransactions.slice(0, 50));
+            // Trier les transactions par nonce (timestamp) décroissant pour avoir les vraies dernières
+            allTransactions.sort((a, b) => {
+                const nonceA = a.tx?.nonce || 0;
+                const nonceB = b.tx?.nonce || 0;
+                return nonceB - nonceA; // Plus récent en premier
+            });
+
+            this.renderTransactionsPage(allTransactions.slice(0, 20));
         } catch (error) {
             console.error('Error loading transactions page:', error);
             container.innerHTML = `
