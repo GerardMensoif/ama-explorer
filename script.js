@@ -244,6 +244,14 @@ const WebSocketManager = {
     handleNewTransactions(txs) {
         // Ajouter les nouvelles transactions
         if (AppState.currentPage === 'home' && txs.length > 0) {
+            // Debug pour la transaction spécifique
+            txs.forEach(tx => {
+                if (tx.hash === '5RXuvMka6rZiQTsJHkWbRSTcsj7aww8jZUWrcEarQq6F') {
+                    console.log('🔵 WS - Transaction reçue:', tx.hash);
+                    console.log('🔵 WS - tx.metadata:', tx.metadata);
+                    console.log('🔵 WS - tx.metadata.status:', tx.metadata?.status);
+                }
+            });
             // Ajouter toutes les nouvelles transactions (pas de filtre)
             AppState.latestTransactions = [...txs, ...AppState.latestTransactions].slice(0, 10);
             // Recharger les détails complets pour les nouvelles transactions
@@ -518,12 +526,29 @@ const AccountTracker = {
 
                     const timestamp = tx.tx.nonce ? new Date(tx.tx.nonce / 1000000).toLocaleTimeString() : 'Just now';
 
+                    // Badge de finalisation pour real-time tracking
+                    let finalizationBadge = '';
+                    if (tx.metadata && tx.metadata.status) {
+                        const isFinalized = tx.metadata.status === 'finalized';
+                        finalizationBadge = `<span style="
+                            display: inline-block;
+                            padding: 0.15rem 0.4rem;
+                            border-radius: 8px;
+                            font-size: 0.65rem;
+                            font-weight: bold;
+                            background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                            color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                            margin-left: 0.5rem;
+                        " title="${isFinalized ? 'Finalized' : 'Committed'}"><i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i></span>`;
+                    }
+
                     return `
                         <div class="transaction-item" onclick="SearchManager.showTransactionFromHash('${tx.hash}')" style="border-left: 3px solid ${statusColor}; animation: slideInRight 0.3s ease;">
                             <div class="tx-main-info">
                                 <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
                                 <div class="tx-function">${action.function}</div>
                                 <span style="font-size: 0.8em; color: ${statusColor}; margin-left: 0.5rem;">${txStatus.replace(/^:/, '').toUpperCase()}</span>
+                                ${finalizationBadge}
                             </div>
                             <div class="tx-details">
                                 ${isTransfer ?
@@ -988,7 +1013,12 @@ const PageManager = {
                                 // Récupérer les détails des transactions
                                 const txsData = await API.getTransactionsByEntry(entry.hash);
                                 if (txsData.txs) {
-                                    allTransactions.push(...txsData.txs.slice(0, 5)); // Max 5 tx par block
+                                    // Recharger chaque transaction avec les détails complets (receipts)
+                                    const txsToLoad = txsData.txs.slice(0, 5);
+                                    const txsWithDetails = await Promise.all(
+                                        txsToLoad.map(tx => API.getTransaction(tx.hash).catch(() => tx))
+                                    );
+                                    allTransactions.push(...txsWithDetails);
                                 }
                                 if (allTransactions.length >= 10) break;
                             }
@@ -1053,6 +1083,22 @@ const PageManager = {
                 margin-left: 0.3rem;
             ">${statusText}</span>`;
 
+            // Badge de finalisation compact pour les listes
+            let finalizationBadge = '';
+            if (tx.metadata && tx.metadata.status) {
+                const isFinalized = tx.metadata.status === 'finalized';
+                finalizationBadge = `<span style="
+                    display: inline-block;
+                    padding: 0.1rem 0.4rem;
+                    border-radius: 8px;
+                    font-size: 0.6rem;
+                    font-weight: bold;
+                    background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                    color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                    margin-left: 0.2rem;
+                " title="${isFinalized ? 'Transaction finalized and immutable' : 'Transaction committed but not yet finalized'}"><i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i></span>`;
+            }
+
             let amount = '';
             if (isTransfer && action.args.length >= 2) {
                 const amountValue = action.args[1];
@@ -1068,7 +1114,7 @@ const PageManager = {
                 <div class="transaction-item-small" onclick="SearchManager.showTransactionFromHash('${tx.hash}')">
                     <div class="tx-info">
                         <div class="tx-hash-small">${Utils.formatHash(tx.hash, 12)}</div>
-                        <div class="tx-function-small">${action.function} ${statusBadge}</div>
+                        <div class="tx-function-small">${action.function} ${statusBadge}${finalizationBadge}</div>
                     </div>
                     <div class="tx-amount-small">
                         ${amount || action.contract}
@@ -1215,7 +1261,11 @@ const PageManager = {
                                 // Récupérer les détails des transactions
                                 const txsData = await API.getTransactionsByEntry(entry.hash);
                                 if (txsData.txs) {
-                                    allTransactions.push(...txsData.txs);
+                                    // Recharger chaque transaction avec les détails complets (receipts)
+                                    const txsWithDetails = await Promise.all(
+                                        txsData.txs.map(tx => API.getTransaction(tx.hash).catch(() => tx))
+                                    );
+                                    allTransactions.push(...txsWithDetails);
                                 }
                                 if (allTransactions.length >= 20) break;
                             }
@@ -1264,6 +1314,36 @@ const PageManager = {
                             const action = tx.tx.action;
                             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
+                            // Statut d'exécution
+                            const status = Utils.getTransactionStatus(tx.receipt || tx.result);
+                            const isSuccess = status.isSuccess;
+                            const statusBadge = `<span style="
+                                display: inline-block;
+                                padding: 0.15rem 0.4rem;
+                                border-radius: 8px;
+                                font-size: 0.7rem;
+                                font-weight: bold;
+                                background: ${isSuccess ? 'rgba(50, 205, 50, 0.2)' : 'rgba(255, 99, 71, 0.2)'};
+                                color: ${isSuccess ? '#32cd32' : '#ff6347'};
+                                margin-left: 0.3rem;
+                            ">${isSuccess ? 'OK' : 'Error'}</span>`;
+
+                            // Badge de finalisation
+                            let finalizationBadge = '';
+                            if (tx.metadata && tx.metadata.status) {
+                                const isFinalized = tx.metadata.status === 'finalized';
+                                finalizationBadge = `<span style="
+                                    display: inline-block;
+                                    padding: 0.15rem 0.4rem;
+                                    border-radius: 8px;
+                                    font-size: 0.65rem;
+                                    font-weight: bold;
+                                    background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                                    color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                                    margin-left: 0.2rem;
+                                " title="${isFinalized ? 'Finalized' : 'Committed'}"><i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i></span>`;
+                            }
+
                             let amount = '';
                             let recipient = '';
 
@@ -1282,7 +1362,7 @@ const PageManager = {
                                 <div class="transaction-item" onclick="SearchManager.showTransactionFromHash('${tx.hash}')">
                                     <div class="tx-main-info">
                                         <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
-                                        <div class="tx-function">${action.function}</div>
+                                        <div class="tx-function">${action.function} ${statusBadge}${finalizationBadge}</div>
                                     </div>
                                     <div class="tx-details">
                                         ${isTransfer ?
@@ -2341,6 +2421,22 @@ const PageManager = {
                 margin-left: 0.3rem;
             ">${statusText}</span>`;
 
+            // Badge de finalisation
+            let finalizationBadge = '';
+            if (tx.metadata && tx.metadata.status) {
+                const isFinalized = tx.metadata.status === 'finalized';
+                finalizationBadge = `<span style="
+                    display: inline-block;
+                    padding: 0.15rem 0.4rem;
+                    border-radius: 8px;
+                    font-size: 0.65rem;
+                    font-weight: bold;
+                    background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                    color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                    margin-left: 0.2rem;
+                " title="${isFinalized ? 'Finalized' : 'Committed'}"><i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i></span>`;
+            }
+
             let amount = '';
             if (isTransfer && action.args.length >= 2) {
                 const amountValue = action.args[1];
@@ -2378,7 +2474,7 @@ const PageManager = {
                         </div>
                     </div>
                     <div class="tx-details">
-                        <div class="tx-function">${action.function} ${statusBadge}</div>
+                        <div class="tx-function">${action.function} ${statusBadge}${finalizationBadge}</div>
                         <div class="tx-contract">${Utils.formatHash(action.contract, 8)}</div>
                     </div>
                     <div class="tx-meta">
@@ -2564,6 +2660,22 @@ const BlockExplorer = {
                 margin-left: 0.5rem;
             ">${statusText}</span>`;
 
+            // Badge de finalisation pour modal de bloc
+            let finalizationBadge = '';
+            if (tx.metadata && tx.metadata.status) {
+                const isFinalized = tx.metadata.status === 'finalized';
+                finalizationBadge = `<span style="
+                    display: inline-block;
+                    padding: 0.2rem 0.5rem;
+                    border-radius: 8px;
+                    font-size: 0.7rem;
+                    font-weight: bold;
+                    background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                    color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                    margin-left: 0.3rem;
+                " title="${isFinalized ? 'Finalized' : 'Committed'}"><i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i></span>`;
+            }
+
             let amount = '';
             let recipient = '';
 
@@ -2597,7 +2709,7 @@ const BlockExplorer = {
                         </div>
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; font-size: 0.9em;">
                             <div><strong>Function:</strong></div>
-                            <div>${action.function} ${statusBadge}</div>
+                            <div>${action.function} ${statusBadge}${finalizationBadge}</div>
                             <div><strong>Contract:</strong></div>
                             <div>${action.contract}</div>
                             ${isTransfer ?
@@ -3071,6 +3183,28 @@ const SearchManager = {
             </span>
         `;
 
+        // Badge de statut de finalisation
+        let finalizationBadge = '';
+        if (tx.metadata && tx.metadata.status) {
+            const isFinalized = tx.metadata.status === 'finalized';
+            const finalizationText = isFinalized ? 'Finalized' : 'Committed';
+            finalizationBadge = `
+                <span style="
+                    display: inline-block;
+                    padding: 0.3rem 0.8rem;
+                    border-radius: 12px;
+                    font-size: 0.85rem;
+                    font-weight: bold;
+                    background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                    color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                    border: 1px solid ${isFinalized ? '#0096ff' : '#ffc107'};
+                    margin-left: 0.5rem;
+                ">
+                    <i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i> ${finalizationText}
+                </span>
+            `;
+        }
+
         // Extraire les informations de transfer si c'est le cas
         let transferInfo = '';
         if (isTransfer && action.args.length >= 2) {
@@ -3172,7 +3306,7 @@ const SearchManager = {
             <div style="margin: 2rem 0;">
                 <div style="display: grid; gap: 1rem;">
                     <div><strong>Hash:</strong> <span onclick="SearchManager.goToTransactionPage('${tx.hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour aller à la page de la transaction">${tx.hash}</span></div>
-                    <div><strong>Status:</strong> ${statusBadge}</div>
+                    <div><strong>Status:</strong> ${statusBadge}${finalizationBadge}</div>
                     ${!isTransfer ? `<div><strong>Signer:</strong> <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 16)}</span></div>` : ''}
                     <div><strong>Timestamp:</strong> ${tx.tx.nonce ? new Date(tx.tx.nonce / 1000000).toLocaleString() : '-'}</div>
                     <div><strong>Nonce:</strong> ${tx.tx.nonce}</div>
