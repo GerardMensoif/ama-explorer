@@ -2,39 +2,6 @@
 const API_BASE = 'https://nodes.amadeus.bot';
 const WS_URL = 'wss://nodes.amadeus.bot/ws/rpc';
 
-// Auto-update system - checks for new version every 3 minutes
-(function() {
-    const CHECK_INTERVAL = 3 * 60 * 1000; // 3 minutes
-    let currentVersion = localStorage.getItem('app_version');
-
-    async function checkVersion() {
-        try {
-            const response = await fetch('/version.json?t=' + Date.now());
-            const data = await response.json();
-            const newVersion = data.timestamp.toString();
-
-            if (!currentVersion) {
-                // First load, save current version
-                localStorage.setItem('app_version', newVersion);
-                currentVersion = newVersion;
-            } else if (currentVersion !== newVersion) {
-                // Version changed, force reload
-                console.log('New version detected, reloading...');
-                localStorage.setItem('app_version', newVersion);
-                window.location.reload(true);
-            }
-        } catch (error) {
-            console.error('Version check failed:', error);
-        }
-    }
-
-    // Check on load
-    checkVersion();
-
-    // Check every 3 minutes
-    setInterval(checkVersion, CHECK_INTERVAL);
-})();
-
 // État global de l'application
 const AppState = {
     currentPage: 'home',
@@ -64,7 +31,6 @@ const WebSocketManager = {
     reconnectTimeout: null,
     rejoined: false,
     startTime: null,
-    renderBlocksTimeout: null,
 
     init() {
         this.connect();
@@ -227,17 +193,12 @@ const WebSocketManager = {
             // Vérifier si le bloc n'existe pas déjà (éviter les doublons)
             const existingBlock = AppState.latestBlocks.find(b => b.hash === entry.hash);
             if (!existingBlock) {
-                AppState.latestBlocks.push(entry);
-            }
-
-            // Debounce render to avoid flickering when multiple blocks arrive quickly
-            clearTimeout(this.renderBlocksTimeout);
-            this.renderBlocksTimeout = setTimeout(() => {
-                // Sort by height descending and keep only top 10
+                AppState.latestBlocks.unshift(entry);
+                // Garder seulement les 10 plus récents (triés par hauteur)
                 AppState.latestBlocks.sort((a, b) => b.header.height - a.header.height);
                 AppState.latestBlocks = AppState.latestBlocks.slice(0, 10);
                 PageManager.renderLatestBlocks(AppState.latestBlocks);
-            }, 200); // Wait 200ms for multiple blocks to arrive
+            }
         }
     },
 
@@ -518,12 +479,29 @@ const AccountTracker = {
 
                     const timestamp = tx.tx.nonce ? new Date(tx.tx.nonce / 1000000).toLocaleTimeString() : 'Just now';
 
+                    // Badge de finalisation pour real-time tracking
+                    let finalizationBadge = '';
+                    if (tx.metadata && tx.metadata.status) {
+                        const isFinalized = tx.metadata.status === 'finalized';
+                        finalizationBadge = `<span style="
+                            display: inline-block;
+                            padding: 0.15rem 0.4rem;
+                            border-radius: 8px;
+                            font-size: 0.65rem;
+                            font-weight: bold;
+                            background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                            color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                            margin-left: 0.5rem;
+                        " title="${isFinalized ? 'Finalized' : 'Committed'}"><i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i></span>`;
+                    }
+
                     return `
                         <div class="transaction-item" onclick="SearchManager.showTransactionFromHash('${tx.hash}')" style="border-left: 3px solid ${statusColor}; animation: slideInRight 0.3s ease;">
                             <div class="tx-main-info">
                                 <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
                                 <div class="tx-function">${action.function}</div>
                                 <span style="font-size: 0.8em; color: ${statusColor}; margin-left: 0.5rem;">${txStatus.replace(/^:/, '').toUpperCase()}</span>
+                                ${finalizationBadge}
                             </div>
                             <div class="tx-details">
                                 ${isTransfer ?
@@ -719,17 +697,17 @@ const PageManager = {
         switch (pageName) {
             case 'address':
                 if (params && params.address) {
-                    url = `/network/address/${params.address}`;
+                    url = `/address/${params.address}`;
                 }
                 break;
             case 'block':
                 if (params && params.blockNumber) {
-                    url = `/network/tip/${params.blockNumber}`;
+                    url = `/block/${params.blockNumber}`;
                 }
                 break;
             case 'transaction':
                 if (params && params.txHash) {
-                    url = `/network/tx/${params.txHash}`;
+                    url = `/transaction/${params.txHash}`;
                 }
                 break;
             case 'home':
@@ -756,25 +734,6 @@ const PageManager = {
             return { page: 'home', params: null };
         }
 
-        // New format: /network/type/value (3 parts)
-        if (pathParts.length === 3 && pathParts[0] === 'network') {
-            const [, type, value] = pathParts;
-
-            if (type === 'address') {
-                AppState.currentAddress = value;
-                return { page: 'address', params: { address: value } };
-            }
-
-            if (type === 'tip') {
-                return { page: 'block', params: { blockNumber: value } };
-            }
-
-            if (type === 'tx') {
-                return { page: 'transaction', params: { txHash: value } };
-            }
-        }
-
-        // Old format: /type/value (2 parts) - keep for backward compatibility
         if (pathParts.length === 2) {
             const [type, value] = pathParts;
 
@@ -783,7 +742,7 @@ const PageManager = {
                 return { page: 'address', params: { address: value } };
             }
 
-            if (type === 'block' || type === 'tip') {
+            if (type === 'block') {
                 return { page: 'block', params: { blockNumber: value } };
             }
 
@@ -913,23 +872,14 @@ const PageManager = {
                 try {
                     const blockData = await API.request(`/api/chain/height/${height}`);
                     if (blockData.entries && blockData.entries.length > 0) {
-                        // Check if block already exists (from WebSocket)
-                        const existingBlock = AppState.latestBlocks.find(b => b.hash === blockData.entries[0].hash);
-                        if (!existingBlock) {
-                            blocks.push(blockData.entries[0]);
-                        }
+                        blocks.push(blockData.entries[0]);
                     }
                 } catch (error) {
                     console.warn(`Impossible de charger le block ${height}:`, error);
                 }
             }
 
-            // Merge with existing blocks from WebSocket and sort
-            AppState.latestBlocks = [...AppState.latestBlocks, ...blocks];
-            AppState.latestBlocks.sort((a, b) => b.header.height - a.header.height);
-            AppState.latestBlocks = AppState.latestBlocks.slice(0, 10);
-
-            await this.renderLatestBlocks(AppState.latestBlocks);
+            await this.renderLatestBlocks(blocks.slice(0, 10));
         } catch (error) {
             console.error('Error loading latest blocks:', error);
         }
@@ -1053,6 +1003,22 @@ const PageManager = {
                 margin-left: 0.3rem;
             ">${statusText}</span>`;
 
+            // Badge de finalisation compact pour les listes
+            let finalizationBadge = '';
+            if (tx.metadata && tx.metadata.status) {
+                const isFinalized = tx.metadata.status === 'finalized';
+                finalizationBadge = `<span style="
+                    display: inline-block;
+                    padding: 0.1rem 0.4rem;
+                    border-radius: 8px;
+                    font-size: 0.6rem;
+                    font-weight: bold;
+                    background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                    color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                    margin-left: 0.2rem;
+                " title="${isFinalized ? 'Transaction finalized and immutable' : 'Transaction committed but not yet finalized'}"><i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i></span>`;
+            }
+
             let amount = '';
             if (isTransfer && action.args.length >= 2) {
                 const amountValue = action.args[1];
@@ -1068,7 +1034,7 @@ const PageManager = {
                 <div class="transaction-item-small" onclick="SearchManager.showTransactionFromHash('${tx.hash}')">
                     <div class="tx-info">
                         <div class="tx-hash-small">${Utils.formatHash(tx.hash, 12)}</div>
-                        <div class="tx-function-small">${action.function} ${statusBadge}</div>
+                        <div class="tx-function-small">${action.function} ${statusBadge}${finalizationBadge}</div>
                     </div>
                     <div class="tx-amount-small">
                         ${amount || action.contract}
@@ -1264,6 +1230,36 @@ const PageManager = {
                             const action = tx.tx.action;
                             const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
+                            // Statut d'exécution
+                            const status = Utils.getTransactionStatus(tx.receipt || tx.result);
+                            const isSuccess = status.isSuccess;
+                            const statusBadge = `<span style="
+                                display: inline-block;
+                                padding: 0.15rem 0.4rem;
+                                border-radius: 8px;
+                                font-size: 0.7rem;
+                                font-weight: bold;
+                                background: ${isSuccess ? 'rgba(50, 205, 50, 0.2)' : 'rgba(255, 99, 71, 0.2)'};
+                                color: ${isSuccess ? '#32cd32' : '#ff6347'};
+                                margin-left: 0.3rem;
+                            ">${isSuccess ? 'OK' : 'Error'}</span>`;
+
+                            // Badge de finalisation
+                            let finalizationBadge = '';
+                            if (tx.metadata && tx.metadata.status) {
+                                const isFinalized = tx.metadata.status === 'finalized';
+                                finalizationBadge = `<span style="
+                                    display: inline-block;
+                                    padding: 0.15rem 0.4rem;
+                                    border-radius: 8px;
+                                    font-size: 0.65rem;
+                                    font-weight: bold;
+                                    background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                                    color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                                    margin-left: 0.2rem;
+                                " title="${isFinalized ? 'Finalized' : 'Committed'}"><i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i></span>`;
+                            }
+
                             let amount = '';
                             let recipient = '';
 
@@ -1282,7 +1278,7 @@ const PageManager = {
                                 <div class="transaction-item" onclick="SearchManager.showTransactionFromHash('${tx.hash}')">
                                     <div class="tx-main-info">
                                         <div class="tx-hash">${Utils.formatHash(tx.hash, 16)}</div>
-                                        <div class="tx-function">${action.function}</div>
+                                        <div class="tx-function">${action.function} ${statusBadge}${finalizationBadge}</div>
                                     </div>
                                     <div class="tx-details">
                                         ${isTransfer ?
@@ -1604,7 +1600,7 @@ const PageManager = {
                     backgroundColor: 'rgba(0, 212, 255, 0.1)',
                     fill: true,
                     tension: 0.4,
-                    pointRadius: 0,
+                    pointRadius: 2,
                     pointHoverRadius: 5,
                     borderWidth: 2
                 }]
@@ -1723,7 +1719,7 @@ const PageManager = {
                     backgroundColor: 'rgba(255, 193, 7, 0.1)',
                     fill: true,
                     tension: 0.4,
-                    pointRadius: 0,
+                    pointRadius: 2,
                     pointHoverRadius: 5,
                     borderWidth: 2
                 }]
@@ -1802,21 +1798,6 @@ const PageManager = {
         });
     },
 
-    // Smooth data using moving average
-    smoothData(values, windowSize = 5) {
-        if (values.length < windowSize) return values;
-
-        const smoothed = [];
-        for (let i = 0; i < values.length; i++) {
-            const start = Math.max(0, i - Math.floor(windowSize / 2));
-            const end = Math.min(values.length, i + Math.ceil(windowSize / 2));
-            const window = values.slice(start, end);
-            const avg = window.reduce((sum, val) => sum + val, 0) / window.length;
-            smoothed.push(avg);
-        }
-        return smoothed;
-    },
-
     processChartData(data, period) {
         const now = Date.now();
         let filtered = data;
@@ -1827,30 +1808,13 @@ const PageManager = {
                 filtered = data.filter(entry => now - entry.timestamp <= 24 * 60 * 60 * 1000);
                 break;
             case '7d':
-                filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
-                break;
-            case '30d':
-                filtered = data.filter(entry => now - entry.timestamp <= 30 * 24 * 60 * 60 * 1000);
-                break;
-            case '90d':
-                filtered = data.filter(entry => now - entry.timestamp <= 90 * 24 * 60 * 60 * 1000);
-                break;
             default:
                 filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
                 break;
         }
 
-        // Filter out outliers (PFLOPS > 165 are errors)
-        const cleanData = filtered.map(entry => ({
-            ...entry,
-            pflops: entry.pflops > 165 ? null : entry.pflops
-        })).filter(entry => entry.pflops !== null);
-
-        // Adjust smoothing window based on period
-        const smoothWindow = period === '30d' ? 30 : period === '90d' ? 50 : 10;
-
         return {
-            labels: cleanData.map(entry => {
+            labels: filtered.map(entry => {
                 const date = new Date(entry.timestamp);
                 const now = new Date();
                 const diffHours = (now - date) / (1000 * 60 * 60);
@@ -1868,9 +1832,9 @@ const PageManager = {
                     });
                 }
             }),
-            values: this.smoothData(cleanData.map(entry => entry.pflops), smoothWindow),
-            timestamps: cleanData.map(entry => entry.timestamp),
-            heights: cleanData.map(entry => entry.height || null)
+            values: filtered.map(entry => entry.pflops),
+            timestamps: filtered.map(entry => entry.timestamp),
+            heights: filtered.map(entry => entry.height || null)
         };
     },
 
@@ -1884,14 +1848,6 @@ const PageManager = {
                 filtered = data.filter(entry => now - entry.timestamp <= 24 * 60 * 60 * 1000);
                 break;
             case '7d':
-                filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
-                break;
-            case '30d':
-                filtered = data.filter(entry => now - entry.timestamp <= 30 * 24 * 60 * 60 * 1000);
-                break;
-            case '90d':
-                filtered = data.filter(entry => now - entry.timestamp <= 90 * 24 * 60 * 60 * 1000);
-                break;
             default:
                 filtered = data.filter(entry => now - entry.timestamp <= 7 * 24 * 60 * 60 * 1000);
                 break;
@@ -1899,9 +1855,6 @@ const PageManager = {
 
         // Always use filtered data but ensure TPS values exist
         const chartEntries = filtered;
-
-        // Adjust smoothing window based on period
-        const smoothWindow = period === '30d' ? 30 : period === '90d' ? 50 : 10;
 
         return {
             labels: chartEntries.map(entry => {
@@ -1922,7 +1875,7 @@ const PageManager = {
                     });
                 }
             }),
-            values: this.smoothData(chartEntries.map(entry => entry.txs_per_sec || 0), smoothWindow),
+            values: chartEntries.map(entry => entry.txs_per_sec || 0),
             timestamps: chartEntries.map(entry => entry.timestamp),
             heights: chartEntries.map(entry => entry.height || null)
         };
@@ -2092,32 +2045,8 @@ const PageManager = {
 
         try {
             // Charger les balances
-            let balances = [];
-            try {
-                const balanceData = await API.getAllBalances(address);
-                balances = balanceData.balances || [];
-
-                // Fallback: if balance_all returns empty, try balance for AMA
-                if (balances.length === 0) {
-                    const amaBalance = await API.getBalance(address, 'AMA');
-                    if (amaBalance && amaBalance.balance) {
-                        balances = [amaBalance.balance];
-                    }
-                }
-            } catch (balanceError) {
-                console.warn('balance_all failed, trying balance for AMA:', balanceError);
-                // Fallback to single balance API
-                try {
-                    const amaBalance = await API.getBalance(address, 'AMA');
-                    if (amaBalance && amaBalance.balance) {
-                        balances = [amaBalance.balance];
-                    }
-                } catch (fallbackError) {
-                    console.error('All balance APIs failed:', fallbackError);
-                }
-            }
-
-            this.renderAddressBalances(balances);
+            const balanceData = await API.getAllBalances(address);
+            this.renderAddressBalances(balanceData.balances || []);
 
             // Charger les transactions
             await this.loadAddressTransactions(address, 'all', 50);
@@ -2144,32 +2073,9 @@ const PageManager = {
                 const typeFilter = document.getElementById('txTypeFilter');
                 const limitFilter = document.getElementById('txLimitFilter');
 
-                // Reload balances with fallback
-                let balances = [];
-                try {
-                    const balanceData = await API.getAllBalances(address);
-                    balances = balanceData.balances || [];
-
-                    // Fallback: if balance_all returns empty, try balance for AMA
-                    if (balances.length === 0) {
-                        const amaBalance = await API.getBalance(address, 'AMA');
-                        if (amaBalance && amaBalance.balance) {
-                            balances = [amaBalance.balance];
-                        }
-                    }
-                } catch (balanceError) {
-                    console.warn('balance_all failed, trying balance for AMA:', balanceError);
-                    try {
-                        const amaBalance = await API.getBalance(address, 'AMA');
-                        if (amaBalance && amaBalance.balance) {
-                            balances = [amaBalance.balance];
-                        }
-                    } catch (fallbackError) {
-                        console.error('All balance APIs failed:', fallbackError);
-                    }
-                }
-
-                this.renderAddressBalances(balances);
+                // Reload balances
+                const balanceData = await API.getAllBalances(address);
+                this.renderAddressBalances(balanceData.balances || []);
 
                 // Reload transactions
                 await this.loadAddressTransactions(address, typeFilter.value, parseInt(limitFilter.value));
@@ -2341,6 +2247,22 @@ const PageManager = {
                 margin-left: 0.3rem;
             ">${statusText}</span>`;
 
+            // Badge de finalisation
+            let finalizationBadge = '';
+            if (tx.metadata && tx.metadata.status) {
+                const isFinalized = tx.metadata.status === 'finalized';
+                finalizationBadge = `<span style="
+                    display: inline-block;
+                    padding: 0.15rem 0.4rem;
+                    border-radius: 8px;
+                    font-size: 0.65rem;
+                    font-weight: bold;
+                    background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                    color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                    margin-left: 0.2rem;
+                " title="${isFinalized ? 'Finalized' : 'Committed'}"><i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i></span>`;
+            }
+
             let amount = '';
             if (isTransfer && action.args.length >= 2) {
                 const amountValue = action.args[1];
@@ -2378,7 +2300,7 @@ const PageManager = {
                         </div>
                     </div>
                     <div class="tx-details">
-                        <div class="tx-function">${action.function} ${statusBadge}</div>
+                        <div class="tx-function">${action.function} ${statusBadge}${finalizationBadge}</div>
                         <div class="tx-contract">${Utils.formatHash(action.contract, 8)}</div>
                     </div>
                     <div class="tx-meta">
@@ -2564,6 +2486,22 @@ const BlockExplorer = {
                 margin-left: 0.5rem;
             ">${statusText}</span>`;
 
+            // Badge de finalisation pour modal de bloc
+            let finalizationBadge = '';
+            if (tx.metadata && tx.metadata.status) {
+                const isFinalized = tx.metadata.status === 'finalized';
+                finalizationBadge = `<span style="
+                    display: inline-block;
+                    padding: 0.2rem 0.5rem;
+                    border-radius: 8px;
+                    font-size: 0.7rem;
+                    font-weight: bold;
+                    background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                    color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                    margin-left: 0.3rem;
+                " title="${isFinalized ? 'Finalized' : 'Committed'}"><i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i></span>`;
+            }
+
             let amount = '';
             let recipient = '';
 
@@ -2597,7 +2535,7 @@ const BlockExplorer = {
                         </div>
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; font-size: 0.9em;">
                             <div><strong>Function:</strong></div>
-                            <div>${action.function} ${statusBadge}</div>
+                            <div>${action.function} ${statusBadge}${finalizationBadge}</div>
                             <div><strong>Contract:</strong></div>
                             <div>${action.contract}</div>
                             ${isTransfer ?
@@ -2753,13 +2691,12 @@ const SearchManager = {
     },
 
     detectSearchType(query) {
-        // Check address length first (before checking if it's only digits)
-        if (query.length === 98 || query.length === 48 || query.length === 47 || query.length === 66) {
-            return 'address';
+        if (/^\d+$/.test(query)) {
+            return 'block';
         } else if (query.length === 64 || query.length === 44) {
             return 'hash';
-        } else if (/^\d+$/.test(query)) {
-            return 'block';
+        } else if (query.length === 98 || query.length === 48 || query.length === 66) {
+            return 'address';
         }
         return 'unknown';
     },
@@ -2905,16 +2842,16 @@ const SearchManager = {
             // Ajouter à l'historique de recherche
             this.addToRecentSearches(trimmedQuery);
 
-            // Détecter le type de recherche - check address length first before checking if it's all digits
-            if (trimmedQuery.length === 98 || trimmedQuery.length === 48 || trimmedQuery.length === 47 || trimmedQuery.length === 66) {
-                console.log('Detected as address');
-                await this.searchAddress(trimmedQuery);
+            // Détecter le type de recherche
+            if (/^\d+$/.test(trimmedQuery)) {
+                console.log('Detected as block height');
+                await this.searchBlockByHeight(parseInt(trimmedQuery));
             } else if (trimmedQuery.length === 64 || trimmedQuery.length === 44) {
                 console.log('Detected as hash');
                 await this.searchByHash(trimmedQuery);
-            } else if (/^\d+$/.test(trimmedQuery)) {
-                console.log('Detected as block height');
-                await this.searchBlockByHeight(parseInt(trimmedQuery));
+            } else if (trimmedQuery.length === 98 || trimmedQuery.length === 48 || trimmedQuery.length === 66) {
+                console.log('Detected as address');
+                await this.searchAddress(trimmedQuery);
             } else {
                 console.log('Unrecognized format, length:', trimmedQuery.length);
                 Utils.showToast(`Unrecognized search format (${trimmedQuery.length} characters)`, 'error');
@@ -2944,25 +2881,16 @@ const SearchManager = {
 
     async searchByHash(hash) {
         try {
-            // Try as transaction first
+            // Essayer en tant que transaction
             const txData = await API.getTransaction(hash);
             if (txData) {
                 this.showTransactionModal(txData);
                 return;
             }
-        } catch (txError) {
-            // Not a transaction, try as block hash
-            try {
-                const blockData = await API.getEntry(hash);
-                if (blockData && blockData.entry) {
-                    BlockExplorer.renderBlockModal(blockData.entry);
-                    document.getElementById('modal').style.display = 'block';
-                    return;
-                }
-            } catch (blockError) {
-                Utils.showToast('Hash not found', 'error');
-                console.error('Hash search failed:', blockError);
-            }
+        } catch (error) {
+            // Pas une transaction - pour les blocks, il faudrait connaître la hauteur
+            Utils.showToast('Hash not found or block search by hash not supported', 'error');
+            console.log('Hash search failed - if this is a block hash, try searching by block height instead');
         }
     },
 
@@ -3071,6 +2999,28 @@ const SearchManager = {
             </span>
         `;
 
+        // Badge de statut de finalisation
+        let finalizationBadge = '';
+        if (tx.metadata && tx.metadata.status) {
+            const isFinalized = tx.metadata.status === 'finalized';
+            const finalizationText = isFinalized ? 'Finalized' : 'Committed';
+            finalizationBadge = `
+                <span style="
+                    display: inline-block;
+                    padding: 0.3rem 0.8rem;
+                    border-radius: 12px;
+                    font-size: 0.85rem;
+                    font-weight: bold;
+                    background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
+                    color: ${isFinalized ? '#0096ff' : '#ffc107'};
+                    border: 1px solid ${isFinalized ? '#0096ff' : '#ffc107'};
+                    margin-left: 0.5rem;
+                ">
+                    <i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i> ${finalizationText}
+                </span>
+            `;
+        }
+
         // Extraire les informations de transfer si c'est le cas
         let transferInfo = '';
         if (isTransfer && action.args.length >= 2) {
@@ -3172,7 +3122,7 @@ const SearchManager = {
             <div style="margin: 2rem 0;">
                 <div style="display: grid; gap: 1rem;">
                     <div><strong>Hash:</strong> <span onclick="SearchManager.goToTransactionPage('${tx.hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour aller à la page de la transaction">${tx.hash}</span></div>
-                    <div><strong>Status:</strong> ${statusBadge}</div>
+                    <div><strong>Status:</strong> ${statusBadge}${finalizationBadge}</div>
                     ${!isTransfer ? `<div><strong>Signer:</strong> <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 16)}</span></div>` : ''}
                     <div><strong>Timestamp:</strong> ${tx.tx.nonce ? new Date(tx.tx.nonce / 1000000).toLocaleString() : '-'}</div>
                     <div><strong>Nonce:</strong> ${tx.tx.nonce}</div>
