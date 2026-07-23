@@ -25,3 +25,14 @@ jobs:
             --exclude='pflops_cron.log' \
             --exclude='collect_pflops.js' \
             ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/html/amadeus/
+      - name: Rsync testnet
+        run: |
+          sed -i "s|https://nodes.amadeus.bot|https://testnet-rpc.ama.one|g; s|wss://nodes.amadeus.bot|wss://testnet-rpc.ama.one|g" script.js
+          sed -i "s|Amadeus Blockchain Explorer|Amadeus Testnet Blockchain Explorer|g" index.html
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            --exclude='.git*' \
+            --exclude='pflops_data.json' \
+            --exclude='pflops_cron.log' \
+            --exclude='collect_pflops.js' \
+            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/html/testnet-explorer/
