@@ -33,6 +33,7 @@
                 <a href="#" class="nav-link" data-page="transactions">Transactions</a>
                 <a href="#" class="nav-link" data-page="richlist">Rich List</a>
                 <a href="#" class="nav-link" data-page="validators">Validators</a>
+                <a href="#" class="nav-link" data-page="vaults">Vaults</a>
                 <a href="#" class="nav-link" data-page="pflops">Charts</a>
                 <a href="#" class="nav-link" data-page="address" style="display: none;">Address</a>
             </div>
@@ -286,6 +287,27 @@
                 <div class="card-content">
                     <div id="validatorsContainer">
                         <div class="loading">Loading validators...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Page Vaults -->
+        <div id="vaults" class="page">
+            <div class="page-header">
+                <h1>Vaults</h1>
+                <div class="vaults-total">
+                    Total Locked: <span id="vaultsTotalLocked">-</span>
+                </div>
+            </div>
+
+            <div class="card vaults-section">
+                <div class="card-header">
+                    <h2><i class="fas fa-lock"></i> Lockup Vaults</h2>
+                </div>
+                <div class="card-content">
+                    <div id="vaultsContainer">
+                        <div class="loading">Loading vaults...</div>
                     </div>
                 </div>
             </div>

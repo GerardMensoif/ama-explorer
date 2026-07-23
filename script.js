@@ -489,6 +489,38 @@ const Vecpak = {
         }
     },
 
+    readBytesTerm(data, ref) {
+        if (data[ref.o++] !== 0x05) throw new Error('Expected bytes term');
+        const len = Number(this.decodeVarint(data, ref));
+        if (ref.o + len > data.length) throw new Error('EOF bytes term');
+        const b = data.slice(ref.o, ref.o + len);
+        ref.o += len;
+        return b;
+    },
+
+    // Réponse de /api/contract/get_prefix : map {clé binaire -> blob vecpak},
+    // encodée en liste vide quand il n'y a aucune entrée. Les clés contiennent
+    // des octets bruts (pk 48o) donc on ne les convertit pas en chaînes.
+    decodePrefixListing(data) {
+        if (data.length === 0) return [];
+        const ref = { o: 0 };
+        const t = data[ref.o++];
+        if (t === 0x06) {
+            const n = Number(this.decodeVarint(data, ref));
+            if (n === 0) return [];
+            throw new Error('Unexpected non-empty list in prefix listing');
+        }
+        if (t !== 0x07) throw new Error('Unexpected prefix listing type ' + t);
+        const n = Number(this.decodeVarint(data, ref));
+        const out = [];
+        for (let i = 0; i < n; i++) {
+            const key = this.readBytesTerm(data, ref);
+            const value = this.readBytesTerm(data, ref);
+            out.push({ key, value });
+        }
+        return out;
+    },
+
     // Cherche un champ "amount" entier dans les arguments parsés
     findAmount(parsedArgs) {
         for (const p of parsedArgs) {
@@ -779,6 +811,13 @@ const API = {
         return await this.request(`/api/chain/tx/${txId}`);
     },
 
+    // Lecture brute du contract state par préfixe (réponse binaire vecpak)
+    async getContractPrefix(prefix) {
+        const response = await fetch(`${API_BASE}/api/contract/get_prefix`, { method: 'POST', body: prefix });
+        if (!response.ok) throw new Error(`get_prefix HTTP ${response.status}`);
+        return new Uint8Array(await response.arrayBuffer());
+    },
+
     // Transactions dans un block
     async getTransactionsByEntry(entryHash) {
         return await this.request(`/api/chain/txs_in_entry/${entryHash}`);
@@ -982,8 +1021,8 @@ const PageManager = {
             }
         }
 
-        // Page simple (blocks, transactions, richlist, validators, pflops)
-        if (['blocks', 'transactions', 'richlist', 'validators', 'pflops'].includes(pathParts[0])) {
+        // Page simple (blocks, transactions, richlist, validators, vaults, pflops)
+        if (['blocks', 'transactions', 'richlist', 'validators', 'vaults', 'pflops'].includes(pathParts[0])) {
             return { page: pathParts[0], params: null };
         }
 
@@ -1027,6 +1066,9 @@ const PageManager = {
             case 'validators':
                 await this.loadValidatorsPage();
                 break;
+            case 'vaults':
+                await this.loadVaults();
+                break;
             case 'pflops':
                 await this.loadPflopPage();
                 break;
@@ -1062,6 +1104,209 @@ const PageManager = {
             console.error('Error loading home page:', error);
             Utils.showToast('Error loading data', 'error');
         }
+    },
+
+    // Section Vaults : lit les vaults LockupVault directement depuis le contract
+    // state (get_prefix + décodage vecpak côté client) et les commissions des
+    // validateurs associés.
+    // Récupère et décode tous les vaults (partagé entre les pages Vaults et Validators)
+    async fetchVaults() {
+        // En navigation directe, les stats (epoch courant) ne sont pas encore chargées
+        if (!AppState.stats) {
+            const statsData = await API.getStats();
+            if (statsData.stats) AppState.stats = statsData.stats;
+        }
+
+        const [vaultsBin, commissionsBin] = await Promise.all([
+            API.getContractPrefix('bic:lockup_vault:vault:'),
+            API.getContractPrefix('bic:lockup_vault:validator_commission:'),
+        ]);
+
+        const epoch = Math.floor((AppState.stats?.height || 0) / 100000);
+        const td = new TextDecoder();
+
+        // commissions par validateur (clé = pk 48 octets)
+        const commissions = {};
+        for (const { key, value } of Vecpak.decodePrefixListing(commissionsBin)) {
+            commissions[Vecpak.base58Encode(key)] = Vecpak.decodeTerm(value, { o: 0 });
+        }
+
+        return Vecpak.decodePrefixListing(vaultsBin).map(({ key, value }) => {
+            const v = Vecpak.decodeTerm(value, { o: 0 });
+            // clé = <owner 48 octets>:<index>
+            const owner = Vecpak.base58Encode(key.slice(0, 48));
+            const index = parseInt(td.decode(key.slice(49)), 10);
+
+            // un changement de validateur en attente s'applique à partir de son epoch
+            const pendingEpoch = v.validator_pending_epoch;
+            const pendingApplied = pendingEpoch !== null && pendingEpoch !== undefined && epoch >= Number(pendingEpoch);
+            const validatorPk = pendingApplied ? v.validator_pending : v.validator;
+            const pendingPk = !pendingApplied && v.validator_pending ? v.validator_pending : null;
+
+            // Commission du validateur : même résolution que NodeStatsGen.commission/3 —
+            // un set_commission met {pending_bps, pending_epoch} en file ; avant cet epoch
+            // l'ancien taux reste effectif et le changement est exposé comme "pending".
+            // On préfère la sortie stats du node quand elle est disponible.
+            let commissionBps = null;
+            let commissionPending = null;
+            if (validatorPk) {
+                const b58 = Vecpak.base58Encode(validatorPk);
+                const statsV = AppState.stats?.validators?.[b58];
+                if (statsV && statsV.commission_bps !== undefined) {
+                    commissionBps = Number(statsV.commission_bps);
+                    commissionPending = statsV.commission_pending
+                        ? { bps: Number(statsV.commission_pending.bps), epoch: Number(statsV.commission_pending.epoch) }
+                        : null;
+                } else {
+                    const c = commissions[b58];
+                    if (!c) {
+                        commissionBps = 0;
+                    } else if (epoch >= Number(c.pending_epoch)) {
+                        commissionBps = Number(c.pending_bps);
+                    } else {
+                        commissionBps = Number(c.bps);
+                        commissionPending = { bps: Number(c.pending_bps), epoch: Number(c.pending_epoch) };
+                    }
+                }
+            }
+
+            const epochs = Number(v.mature_epoch - v.created_epoch);
+            return {
+                index,
+                owner,
+                tier: td.decode(v.type),
+                lockedFlat: v.amount + v.accrued,
+                rateBps: Number(v.rate_bps || 0n),
+                months: Math.round(epochs / 51.84), // 1.728 epochs/jour x 30 jours
+                epochs,
+                matureEpoch: Number(v.mature_epoch),
+                validator: validatorPk ? Vecpak.base58Encode(validatorPk) : null,
+                pendingValidator: pendingPk ? Vecpak.base58Encode(pendingPk) : null,
+                pendingEpoch: pendingEpoch !== null && pendingEpoch !== undefined ? Number(pendingEpoch) : null,
+                commissionBps,
+                commissionPending,
+            };
+        });
+    },
+
+    async loadVaults() {
+        const container = document.getElementById('vaultsContainer');
+        try {
+            const vaults = await this.fetchVaults();
+
+            // APY décroissant, puis index croissant
+            vaults.sort((a, b) => (b.rateBps - a.rateBps) || (a.index - b.index));
+
+            // Total verrouillé : la valeur exacte du node si disponible, sinon la somme des vaults
+            const totalFlat = vaults.reduce((sum, v) => sum + v.lockedFlat, 0n);
+            const totalAma = AppState.stats?.total_locked ?? Number(totalFlat) / 1e9;
+            document.getElementById('vaultsTotalLocked').textContent =
+                `${Math.round(totalAma).toLocaleString('en-US')} AMA`;
+
+            this.renderVaultsTable(vaults, container);
+        } catch (error) {
+            console.error('Error loading vaults:', error);
+            container.innerHTML = '<p style="color: #b3b3b3; padding: 1rem;">Unable to load vaults.</p>';
+        }
+    },
+
+    // Détail du Vault APY d'un validateur : liste des vaults adossés et leur APY
+    showValidatorApyBreakdown(address) {
+        const entry = AppState.validatorsByAddress?.[address];
+        if (!entry || !entry.backingVaults || entry.backingVaults.length === 0) return;
+
+        const fmtAma = flat => (Number(flat) / 1e9).toLocaleString('en-US', { maximumFractionDigits: 2 });
+        const totalStaked = Number(entry.stakedFlat);
+        const backing = [...entry.backingVaults].sort((a, b) => Number(b.lockedFlat - a.lockedFlat));
+
+        const modalBody = document.getElementById('modalBody');
+        modalBody.innerHTML = `
+            <div class="participation-help">
+                <h2><i class="fas fa-lock"></i> Vault APY Breakdown <span class="participation-value">${(entry.apyBps / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}%</span></h2>
+                <p>Vaults backing validator
+                    <span onclick="BlockExplorer.viewAddress('${address}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline; font-family: monospace; word-break: break-all;">${address}</span>.
+                    The displayed APY is the average of each vault's APY weighted by its locked amount.
+                </p>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 60px;">#</th>
+                            <th style="text-align: center;">Tier</th>
+                            <th style="text-align: right;">Locked</th>
+                            <th style="text-align: right;">Share</th>
+                            <th style="text-align: right;">APY</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${backing.map(v => `
+                            <tr>
+                                <td>${v.index}</td>
+                                <td style="text-align: center;"><span class="tier-badge tier-${v.tier}">${v.tier.toUpperCase()}</span></td>
+                                <td style="text-align: right; font-weight: 600;">${fmtAma(v.lockedFlat)} AMA</td>
+                                <td style="text-align: right; color: #b3b3b3;">${(Number(v.lockedFlat) / totalStaked * 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}%</td>
+                                <td style="text-align: right; font-weight: 600; color: rgb(24, 255, 178);">${(v.rateBps / 100).toLocaleString('en-US')}%</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+        document.getElementById('modal').style.display = 'block';
+    },
+
+    renderVaultsTable(vaults, container) {
+        if (vaults.length === 0) {
+            container.innerHTML = '<p style="color: #b3b3b3; padding: 1rem;">No vaults yet.</p>';
+            return;
+        }
+
+        const fmtAma = flat => (Number(flat) / 1e9).toLocaleString('en-US', { maximumFractionDigits: 2 });
+        const addrLink = b58 => `
+            <span onclick="BlockExplorer.viewAddress('${b58}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">
+                ${Utils.formatHash(b58, 12)}
+            </span>`;
+
+        container.innerHTML = `
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width: 60px;">#</th>
+                        <th>Owner</th>
+                        <th style="text-align: right;">Locked</th>
+                        <th style="text-align: center;">Duration</th>
+                        <th style="text-align: right;">APY</th>
+                        <th>Validator</th>
+                        <th style="text-align: right;">Commission</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${vaults.map(v => `
+                        <tr>
+                            <td>${v.index}</td>
+                            <td>${addrLink(v.owner)}</td>
+                            <td style="text-align: right; font-weight: 600;">${fmtAma(v.lockedFlat)} AMA</td>
+                            <td style="text-align: center;">
+                                <span class="tier-badge tier-${v.tier}">${v.tier.toUpperCase()}</span>
+                                ${v.months} months
+                            </td>
+                            <td style="text-align: right; font-weight: 600; color: rgb(24, 255, 178);">${(v.rateBps / 100).toLocaleString('en-US')}%</td>
+                            <td>
+                                ${v.validator ? addrLink(v.validator)
+                                    : v.pendingValidator ? `${addrLink(v.pendingValidator)} <span class="vault-pending" title="Applies at epoch ${v.pendingEpoch}">pending e${v.pendingEpoch}</span>`
+                                    : '<span style="color: #666;">—</span>'}
+                            </td>
+                            <td style="text-align: right;">
+                                ${v.commissionBps !== null
+                                    ? `${(v.commissionBps / 100).toLocaleString('en-US')}%${v.commissionPending
+                                        ? ` <span class="vault-pending" title="Commission changes to ${(v.commissionPending.bps / 100).toLocaleString('en-US')}% at epoch ${v.commissionPending.epoch}">&rarr; ${(v.commissionPending.bps / 100).toLocaleString('en-US')}% e${v.commissionPending.epoch}</span>`
+                                        : ''}`
+                                    : '<span style="color: #666;">—</span>'}
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
     },
 
     updateStats(stats) {
@@ -1674,26 +1919,59 @@ const PageManager = {
             const totalBurnedEl = document.getElementById('totalBurned');
 
             try {
-                // Get validators data
-                const validators = await API.getValidators();
+                // Validateurs par sols (score d'epoch) + vaults (stake délégué)
+                const [validators, vaults] = await Promise.all([
+                    API.getValidators(),
+                    this.fetchVaults(),
+                ]);
 
                 // Get chain stats for burned value
                 const statsData = await API.getStats();
                 const burned = statsData?.stats?.burned || 0;
 
-                // Calculate statistics
-                const totalValidators = validators.length;
-                const totalScore = validators.reduce((sum, [, score]) => sum + score, 0);
-                const topValidator = validators.length > 0 ? Utils.formatHash(validators[0][0], 8) : 'N/A';
+                // Fusion : un validateur peut être actif par sols, par vault, ou les deux
+                const byAddress = new Map();
+                for (const [address, score] of validators) {
+                    byAddress.set(address, { address, sols: score, stakedFlat: 0n, apyBps: null });
+                }
+                for (const v of vaults) {
+                    if (!v.validator) continue;
+                    const entry = byAddress.get(v.validator) || { address: v.validator, sols: 0, stakedFlat: 0n, weightedBps: 0n, backingVaults: [] };
+                    entry.weightedBps = (entry.weightedBps || 0n) + v.lockedFlat * BigInt(v.rateBps);
+                    entry.stakedFlat += v.lockedFlat;
+                    (entry.backingVaults = entry.backingVaults || []).push(v);
+                    byAddress.set(v.validator, entry);
+                }
+                // APY = moyenne pondérée par le stake des vaults adossés
+                for (const entry of byAddress.values()) {
+                    entry.apyBps = entry.stakedFlat > 0n
+                        ? Number(entry.weightedBps || 0n) / Number(entry.stakedFlat)
+                        : null;
+                }
+
+                // Être validateur par vault exige au moins 1M AMA de stake (VALIDATOR_MIN_STAKE)
+                const MIN_VAULT_STAKE_FLAT = 1000000000000000n; // 1M AMA
+                const merged = [...byAddress.values()]
+                    .filter(v => v.sols > 0 || v.stakedFlat >= MIN_VAULT_STAKE_FLAT)
+                    .map(v => ({ ...v, isVaultValidator: v.stakedFlat >= MIN_VAULT_STAKE_FLAT }));
+
+                // Sols décroissants, puis APY du vault adossé décroissant
+                merged.sort((a, b) => (b.sols - a.sols) || ((b.apyBps ?? -1) - (a.apyBps ?? -1)));
+
+                // Conserver les entrées pour le détail APY (bouton "?")
+                AppState.validatorsByAddress = Object.fromEntries(merged.map(v => [v.address, v]));
+
+                const totalScore = merged.reduce((sum, v) => sum + v.sols, 0);
+                const topValidator = merged.length > 0 ? Utils.formatHash(merged[0].address, 8) : 'N/A';
 
                 // Update statistics
-                totalValidatorsEl.textContent = Utils.formatNumber(totalValidators);
+                totalValidatorsEl.textContent = Utils.formatNumber(merged.length);
                 totalScoreEl.textContent = Utils.formatNumber(totalScore);
                 topValidatorEl.textContent = topValidator;
                 totalBurnedEl.textContent = Utils.formatNumber(burned) + ' AMA';
 
                 // Render validators table
-                this.renderValidatorsTable(validators);
+                this.renderValidatorsTable(merged);
 
             } catch (error) {
                 console.error('Error loading validators:', error);
@@ -1732,35 +2010,53 @@ const PageManager = {
             return;
         }
 
+        const totalScore = validators.reduce((sum, v) => sum + v.sols, 0);
+        const fmtAma = flat => (Number(flat) / 1e9).toLocaleString('en-US', { maximumFractionDigits: 0 });
+
         const html = `
             <table class="data-table">
                 <thead>
                     <tr>
                         <th style="width: 80px;">Rank</th>
                         <th>Validator Address</th>
-                        <th style="width: 150px; text-align: right;">Score</th>
-                        <th style="width: 120px; text-align: right;">Percentage</th>
+                        <th style="width: 140px;">Type</th>
+                        <th style="width: 120px; text-align: right;">Sols</th>
+                        <th style="width: 110px; text-align: right;">Percentage</th>
+                        <th style="width: 150px; text-align: right;">Vault Stake</th>
+                        <th style="width: 100px; text-align: right;">Vault APY</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${validators.map(([address, score], index) => {
-                        const totalScore = validators.reduce((sum, [, s]) => sum + s, 0);
-                        const percentage = totalScore > 0 ? ((score / totalScore) * 100).toFixed(2) : '0.00';
+                    ${validators.map((v, index) => {
+                        const percentage = totalScore > 0 ? ((v.sols / totalScore) * 100).toFixed(2) : '0.00';
+                        const badges = [
+                            v.sols > 0 ? '<span class="vtype-badge vtype-sols">Sols</span>' : '',
+                            v.isVaultValidator ? '<span class="vtype-badge vtype-vault">Vault</span>' : '',
+                        ].join('');
                         return `
                             <tr>
                                 <td style="text-align: center;">
                                     ${index === 0 ? '<i class="fas fa-crown" style="color: gold;"></i>' : '#' + (index + 1)}
                                 </td>
                                 <td>
-                                    <span onclick="BlockExplorer.viewAddress('${address}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">
-                                        ${Utils.formatHash(address, 16)}
+                                    <span onclick="BlockExplorer.viewAddress('${v.address}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">
+                                        ${Utils.formatHash(v.address, 16)}
                                     </span>
                                 </td>
+                                <td>${badges}</td>
                                 <td style="text-align: right; font-weight: 600;">
-                                    ${Utils.formatNumber(score)}
+                                    ${v.sols > 0 ? Utils.formatNumber(v.sols) : '<span style="color: #666;">—</span>'}
                                 </td>
                                 <td style="text-align: right;">
-                                    ${percentage}%
+                                    ${v.sols > 0 ? `${percentage}%` : '<span style="color: #666;">—</span>'}
+                                </td>
+                                <td style="text-align: right;">
+                                    ${v.stakedFlat > 0n ? `${fmtAma(v.stakedFlat)} AMA` : '<span style="color: #666;">—</span>'}
+                                </td>
+                                <td style="text-align: right; font-weight: 600; color: rgb(24, 255, 178);">
+                                    ${v.apyBps !== null
+                                        ? `${(v.apyBps / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}% <button class="help-btn" onclick="PageManager.showValidatorApyBreakdown('${v.address}')" aria-label="APY breakdown" title="Vaults backing this validator">?</button>`
+                                        : '<span style="color: #666;">—</span>'}
                                 </td>
                             </tr>
                         `;

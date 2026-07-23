@@ -367,6 +367,75 @@ body {
     color: rgb(255, 149, 0);
 }
 
+/* Section Vaults */
+.vaults-section {
+    max-width: 1600px;
+    margin: 0 auto 3rem auto;
+}
+
+.vaults-section .card-content {
+    overflow-x: auto;
+}
+
+.vaults-total {
+    padding: 0.35rem 0.9rem;
+    border: 1px solid rgba(24, 255, 178, 0.4);
+    border-radius: 8px;
+    background: rgba(24, 255, 178, 0.1);
+    color: rgb(24, 255, 178);
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.tier-badge {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    margin-right: 0.4rem;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    border: 1px solid rgba(0, 212, 255, 0.4);
+    background: rgba(0, 212, 255, 0.1);
+    color: #00d4ff;
+}
+
+.tier-badge.tier-og {
+    border-color: rgba(255, 193, 7, 0.4);
+    background: rgba(255, 193, 7, 0.1);
+    color: rgb(255, 193, 7);
+}
+
+/* Badges de type de validateur (Sols / Vault) */
+.vtype-badge {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    margin-right: 0.3rem;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    border: 1px solid rgba(0, 212, 255, 0.4);
+    background: rgba(0, 212, 255, 0.1);
+    color: #00d4ff;
+}
+
+.vtype-badge.vtype-vault {
+    border-color: rgba(255, 193, 7, 0.4);
+    background: rgba(255, 193, 7, 0.1);
+    color: rgb(255, 193, 7);
+}
+
+.vault-pending {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    border: 1px solid rgba(255, 193, 7, 0.4);
+    background: rgba(255, 193, 7, 0.1);
+    color: rgb(255, 193, 7);
+    white-space: nowrap;
+}
+
 /* Détails de transaction compacts */
 .tx-hash-line {
     display: flex;
