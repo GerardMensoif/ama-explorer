@@ -15,6 +15,12 @@ jobs:
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+      
+      - name: Generate version.json
+        run: |
+          printf '{\n  "version": "%s",\n  "timestamp": %s\n}\n' \
+            "$(git rev-parse --short HEAD)" "$(date +%s)" > version.json
+          cat version.json
 
       - name: Rsync
         run: |
