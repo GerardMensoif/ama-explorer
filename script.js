@@ -1355,6 +1355,50 @@ const PageManager = {
         document.getElementById('modal').style.display = 'block';
     },
 
+    // Répartition de la supply : circulant + verrouillé vs caps d'émission 3 ans / 30 ans
+    showSupplyHelp() {
+        const s = AppState.stats || {};
+        const circulating = s.circulating || 0;
+        const locked = s.total_locked || 0;
+        const y3 = s.total_supply_y3 || 804065972;
+        const y30 = s.total_supply_y30 || 1000000000;
+
+        const pct = v => Math.max(0, (v / y30) * 100);
+        const circPct = pct(circulating);
+        const lockedPct = pct(locked);
+        const y3Pct = pct(y3 - circulating - locked);
+        const y30Pct = Math.max(0, 100 - circPct - lockedPct - y3Pct);
+        const fmt = v => Math.round(v).toLocaleString('en-US');
+
+        const modalBody = document.getElementById('modalBody');
+        modalBody.innerHTML = `
+            <div class="participation-help">
+                <h2><i class="fas fa-coins"></i> AMA Supply</h2>
+                <p>Where the supply stands today against the protocol emission caps: what already circulates, what is locked in vaults, and how much can still be emitted within <strong>3 years</strong> (${Utils.formatNumber(y3)}) and at the <strong>30 year</strong> max cap (${Utils.formatNumber(y30)}).</p>
+
+                <div class="supply-bar">
+                    <div class="supply-seg supply-circ" style="width: ${circPct}%" title="Circulating: ${fmt(circulating)} AMA"></div>
+                    <div class="supply-seg supply-locked" style="width: ${lockedPct}%" title="Locked in vaults: ${fmt(locked)} AMA"></div>
+                    <div class="supply-seg supply-y3" style="width: ${y3Pct}%" title="Still emittable within 3 years: ${fmt(Math.max(0, y3 - circulating - locked))} AMA"></div>
+                    <div class="supply-seg supply-y30" style="width: ${y30Pct}%" title="Emittable between 3 and 30 years: ${fmt(y30 - y3)} AMA"></div>
+                </div>
+                <div class="supply-scale">
+                    <span class="supply-tick" style="left: ${pct(y3)}%">&#9650; 3y max cap &middot; ${Utils.formatNumber(y3)}</span>
+                    <span class="supply-tick supply-tick-end">30y max cap &middot; ${Utils.formatNumber(y30)}</span>
+                </div>
+
+                <div class="supply-legend">
+                    <div><span class="supply-swatch supply-circ"></span> Circulating <strong>${fmt(circulating)} AMA</strong> <span class="supply-pct">${circPct.toFixed(1)}%</span></div>
+                    <div><span class="supply-swatch supply-locked"></span> Locked in vaults <strong>${fmt(locked)} AMA</strong> <span class="supply-pct">${lockedPct.toFixed(1)}%</span></div>
+                    <div><span class="supply-swatch supply-y3"></span> Emittable within 3y <strong>${fmt(Math.max(0, y3 - circulating - locked))} AMA</strong> <span class="supply-pct">${y3Pct.toFixed(1)}%</span></div>
+                    <div><span class="supply-swatch supply-y30"></span> Emittable 3y &rarr; 30y <strong>${fmt(y30 - y3)} AMA</strong> <span class="supply-pct">${y30Pct.toFixed(1)}%</span></div>
+                </div>
+                <p class="participation-note">Percentages are relative to the 30 year max cap of ${Utils.formatNumber(y30)} AMA.</p>
+            </div>
+        `;
+        document.getElementById('modal').style.display = 'block';
+    },
+
     showParticipationHelp() {
         const modalBody = document.getElementById('modalBody');
         modalBody.innerHTML = `
