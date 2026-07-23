@@ -23,4 +23,5 @@ jobs:
             --exclude='.git*' \
             --exclude='pflops_data.json' \
             --exclude='pflops_cron.log' \
+            --exclude='collect_pflops.js' \
             ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/html/amadeus/
