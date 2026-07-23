@@ -516,7 +516,10 @@ body {
     color: #00d4ff;
     text-decoration: underline;
 }
-
+.footer-content a:hover {
+    color: #00d4ff;
+    text-decoration: underline;
+}
 /* Data Table */
 .data-table {
     width: 100%;
