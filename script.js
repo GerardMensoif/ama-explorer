@@ -394,6 +394,169 @@ const Utils = {
     }
 };
 
+// Décodage vecpak : format de sérialisation des arguments de contrats Amadeus.
+// Un argument encodé est une chaîne base58 contenant un terme vecpak :
+// 0x00 null, 0x01 true, 0x02 false, 0x03 int (varint signé), 0x05 bytes,
+// 0x06 liste, 0x07 map (clés = bytes utf8).
+const Vecpak = {
+    B58: '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz',
+
+    base58Decode(str) {
+        let n = 0n;
+        for (const c of str) {
+            const i = this.B58.indexOf(c);
+            if (i === -1) return null;
+            n = n * 58n + BigInt(i);
+        }
+        const bytes = [];
+        while (n > 0n) { bytes.unshift(Number(n & 0xffn)); n >>= 8n; }
+        let pad = 0;
+        for (const c of str) { if (c === '1') pad++; else break; }
+        return new Uint8Array([...new Array(pad).fill(0), ...bytes]);
+    },
+
+    base58Encode(bytes) {
+        let n = 0n;
+        for (const b of bytes) n = (n << 8n) | BigInt(b);
+        let out = '';
+        while (n > 0n) { out = this.B58[Number(n % 58n)] + out; n /= 58n; }
+        let pad = 0;
+        for (const b of bytes) { if (b === 0) pad++; else break; }
+        return '1'.repeat(pad) + out;
+    },
+
+    decodeVarint(data, ref) {
+        if (ref.o >= data.length) throw new Error('EOF varint');
+        const header = data[ref.o++];
+        if (header === 0) return 0n;
+        const sign = header >> 7;
+        const len = header & 0x7f;
+        if (ref.o + len > data.length) throw new Error('EOF varint bytes');
+        let mag = 0n;
+        for (let i = 0; i < len; i++) mag = (mag << 8n) | BigInt(data[ref.o++]);
+        return sign ? -mag : mag;
+    },
+
+    decodeTerm(data, ref) {
+        if (ref.o >= data.length) throw new Error('EOF term');
+        const t = data[ref.o++];
+        switch (t) {
+            case 0x00: return null;
+            case 0x01: return true;
+            case 0x02: return false;
+            case 0x03: return this.decodeVarint(data, ref);
+            case 0x05: {
+                const len = Number(this.decodeVarint(data, ref));
+                if (ref.o + len > data.length) throw new Error('EOF bytes');
+                const b = data.slice(ref.o, ref.o + len);
+                ref.o += len;
+                return b;
+            }
+            case 0x06: {
+                const n = Number(this.decodeVarint(data, ref));
+                const out = [];
+                for (let i = 0; i < n; i++) out.push(this.decodeTerm(data, ref));
+                return out;
+            }
+            case 0x07: {
+                const n = Number(this.decodeVarint(data, ref));
+                const out = {};
+                for (let i = 0; i < n; i++) {
+                    const k = this.decodeTerm(data, ref);
+                    const v = this.decodeTerm(data, ref);
+                    out[k instanceof Uint8Array ? new TextDecoder().decode(k) : String(k)] = v;
+                }
+                return out;
+            }
+            default: throw new Error('Unknown vecpak type ' + t);
+        }
+    },
+
+    // Tente de décoder un argument (chaîne base58 -> terme vecpak).
+    // On ne garde que les structures (map/liste) entièrement consommées pour
+    // éviter les faux positifs sur les adresses et chaînes ordinaires.
+    tryParseArg(str) {
+        if (typeof str !== 'string' || str.length < 4) return null;
+        const bytes = this.base58Decode(str);
+        if (!bytes || bytes.length === 0 || (bytes[0] !== 0x06 && bytes[0] !== 0x07)) return null;
+        try {
+            const ref = { o: 0 };
+            const val = this.decodeTerm(bytes, ref);
+            if (ref.o !== bytes.length) return null;
+            return val;
+        } catch (e) {
+            return null;
+        }
+    },
+
+    // Cherche un champ "amount" entier dans les arguments parsés
+    findAmount(parsedArgs) {
+        for (const p of parsedArgs) {
+            if (p && typeof p === 'object' && !(p instanceof Uint8Array) && !Array.isArray(p) && typeof p.amount === 'bigint') {
+                return p.amount;
+            }
+        }
+        return null;
+    },
+
+    formatAma(baseUnits) {
+        const neg = baseUnits < 0n;
+        const abs = neg ? -baseUnits : baseUnits;
+        const whole = abs / 1000000000n;
+        const frac = abs % 1000000000n;
+        let out = whole.toLocaleString('en-US');
+        if (frac > 0n) out += '.' + frac.toString().padStart(9, '0').replace(/0+$/, '');
+        return (neg ? '-' : '') + out;
+    },
+
+    escapeHtml(str) {
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    },
+
+    isPrintable(bytes) {
+        if (bytes.length === 0 || bytes.length > 64) return false;
+        for (const b of bytes) {
+            if (b < 0x20 || b > 0x7e) return false;
+        }
+        return true;
+    },
+
+    // Rendu HTML récursif d'une valeur décodée, dans le style de l'explorateur
+    renderValue(val, key = null) {
+        if (val === null) return '<span class="vp-null">null</span>';
+        if (val === true || val === false) return `<span class="vp-bool">${val}</span>`;
+        if (typeof val === 'bigint') {
+            let html = `<span class="vp-int">${val.toLocaleString('en-US')}</span>`;
+            if (key === 'amount') {
+                html += ` <span class="vp-ama">= ${this.formatAma(val)} AMA</span>`;
+            }
+            return html;
+        }
+        if (val instanceof Uint8Array) {
+            if (this.isPrintable(val)) {
+                return `<span class="vp-str">"${this.escapeHtml(new TextDecoder().decode(val))}"</span>`;
+            }
+            const b58 = this.base58Encode(val);
+            if (val.length === 48) {
+                return `<span class="vp-addr" onclick="BlockExplorer.viewAddress('${b58}')" title="View address">${b58}</span>`;
+            }
+            return `<span class="vp-bytes" title="${val.length} bytes">${b58}</span>`;
+        }
+        if (Array.isArray(val)) {
+            if (val.length === 0) return '<span class="vp-null">[]</span>';
+            return `<div class="vp-struct">${val.map((v, i) =>
+                `<div class="vp-row"><span class="vp-key">[${i}]</span><div class="vp-val">${this.renderValue(v)}</div></div>`
+            ).join('')}</div>`;
+        }
+        // map
+        const entries = Object.entries(val);
+        if (entries.length === 0) return '<span class="vp-null">{}</span>';
+        return `<div class="vp-struct">${entries.map(([k, v]) =>
+            `<div class="vp-row"><span class="vp-key">${this.escapeHtml(k)}</span><div class="vp-val">${this.renderValue(v, k)}</div></div>`
+        ).join('')}</div>`;
+    }
+};
+
 // Account Tracker - Real-time transaction monitoring
 const AccountTracker = {
     init() {
@@ -819,8 +982,8 @@ const PageManager = {
             }
         }
 
-        // Page simple (blocks, transactions, richlist, pflops)
-        if (['blocks', 'transactions', 'richlist', 'pflops'].includes(pathParts[0])) {
+        // Page simple (blocks, transactions, richlist, validators, pflops)
+        if (['blocks', 'transactions', 'richlist', 'validators', 'pflops'].includes(pathParts[0])) {
             return { page: pathParts[0], params: null };
         }
 
@@ -913,7 +1076,64 @@ const PageManager = {
         document.getElementById('pflopsStat').textContent = (stats.pflops || 0).toFixed(2);
         document.getElementById('tpsStat').textContent = (stats.txs_per_sec || 0).toFixed(1);
 
+        // Participation : pflops mesurés vs cible de 100 peta-AMAFLOPS, plancher à 10%
+        const TARGET_PFLOPS = 100;
+        const participation = Math.max(10, ((stats.pflops || 0) / TARGET_PFLOPS) * 100);
+        document.getElementById('participationStat').textContent = `${participation.toFixed(0)}%`;
+
+        // Les pushs WebSocket peuvent omettre burned : ne pas écraser la valeur affichée
+        if (stats.burned !== undefined) {
+            document.getElementById('burntSupplyStat').textContent = Utils.formatNumber(stats.burned);
+        }
+
         AppState.stats = stats;
+    },
+
+    showBurnHelp() {
+        const modalBody = document.getElementById('modalBody');
+        modalBody.innerHTML = `
+            <div class="participation-help">
+                <h2 class="burn-title"><i class="fas fa-fire"></i> Burnt Supply <span class="participation-value burn-value">${document.getElementById('burntSupplyStat').textContent} AMA</span></h2>
+                <p>Each transaction burns <strong class="burn-accent">50% of the AMA</strong> paid in fees. The burnt AMA is destroyed at the protocol level and removed from the supply forever.</p>
+                <div class="participation-highlights">
+                    <div class="highlight-box highlight-amber">
+                        <strong>Permanently removed</strong>
+                        <span>Burnt AMA can never re-enter circulation — it is subtracted from the supply for good.</span>
+                    </div>
+                    <div class="highlight-box highlight-green">
+                        <strong>Deflationary</strong>
+                        <span>The more the network is used, the more AMA is burnt, reducing supply as activity grows.</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.getElementById('modal').style.display = 'block';
+    },
+
+    showParticipationHelp() {
+        const modalBody = document.getElementById('modalBody');
+        modalBody.innerHTML = `
+            <div class="participation-help">
+                <h2><i class="fas fa-percent"></i> Participation <span class="participation-value">${document.getElementById('participationStat').textContent}</span></h2>
+                <p>The network measures total solving compute in <strong>AMAFLOPS</strong> — like FLOPS, but not standard floating-point ops, since every solve attempt includes a blake3 step. It targets <strong>100 peta-AMAFLOPS</strong> and pays out that percentage of the solver emission each epoch. The rest accrues — it is not handed to a small set of miners.</p>
+                <div class="participation-highlights">
+                    <div class="highlight-box">
+                        <strong>Paid per compute</strong>
+                        <span>You earn your compute's share of the 100 peta-AMAFLOPS target — a fixed rate per card while participation is 10&ndash;100%.</span>
+                    </div>
+                    <div class="highlight-box highlight-green">
+                        <strong>No dilution</strong>
+                        <span>Run 1 GPU, add 100 more &rarr; earn 101&times; the per-card rate. New miners never shrink your rewards below the 100 target.</span>
+                    </div>
+                    <div class="highlight-box highlight-amber">
+                        <strong>10% floor</strong>
+                        <span>At least 10% always pays out. Below the floor, fewer miners split it — each card earns <em>more</em>.</span>
+                    </div>
+                </div>
+                <p class="participation-note">Above the 100 target the budget caps and extra solving power dilutes; emission decays &asymp;0.3%/day.</p>
+            </div>
+        `;
+        document.getElementById('modal').style.display = 'block';
     },
 
     animateHeight(newHeight) {
@@ -3161,6 +3381,40 @@ const SearchManager = {
         const action = tx.tx.action;
         const isTransfer = action.contract === 'Coin' && action.function === 'transfer';
 
+        // Décoder les arguments vecpak des appels de contrat
+        const parsedArgs = (action.args || []).map(a => Vecpak.tryParseArg(a));
+        const hasParsedArgs = parsedArgs.some(p => p !== null);
+        const movedAmount = !isTransfer ? Vecpak.findAmount(parsedArgs.filter(p => p !== null)) : null;
+
+        // Encadré "AMA Moved" pour les appels de contrat qui déplacent des AMA
+        // (même présentation que le Transfer Details d'un Coin.transfer)
+        let contractMovedInfo = '';
+        if (movedAmount !== null) {
+            contractMovedInfo = `
+                <div style="background: rgba(0, 212, 255, 0.1); padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+                    <h3 style="margin: 0 0 1rem 0; color: rgb(24, 255, 178);"><i class="fas fa-exchange-alt"></i> AMA Moved</h3>
+                    <div style="display: grid; gap: 0.75rem;">
+                        <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
+                            <strong>From:</strong>
+                            <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline; font-family: monospace; word-break: break-all;">
+                                ${tx.tx.signer}
+                            </span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
+                            <strong>To:</strong>
+                            <span><i class="fas fa-file-contract" style="color: #b3b3b3; margin-right: 0.4rem;"></i>${action.contract} <span style="color: #b3b3b3;">(${action.function})</span></span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
+                            <strong>Amount:</strong>
+                            <span style="font-weight: bold; color: rgb(24, 255, 178); font-size: 1.1em;">
+                                ${Vecpak.formatAma(movedAmount)} AMA
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         // Extraire et formater le statut de la transaction (supports both old and new format)
         const status = Utils.getTransactionStatus(tx.receipt || tx.result);
         const txStatus = status.statusMessage;
@@ -3180,9 +3434,9 @@ const SearchManager = {
         const statusBadge = `
             <span style="
                 display: inline-block;
-                padding: 0.3rem 0.8rem;
+                padding: 0.15rem 0.6rem;
                 border-radius: 12px;
-                font-size: 0.85rem;
+                font-size: 0.75rem;
                 font-weight: bold;
                 background: ${isSuccess ? 'rgba(50, 205, 50, 0.2)' : 'rgba(255, 99, 71, 0.2)'};
                 color: ${isSuccess ? '#32cd32' : '#ff6347'};
@@ -3200,14 +3454,13 @@ const SearchManager = {
             finalizationBadge = `
                 <span style="
                     display: inline-block;
-                    padding: 0.3rem 0.8rem;
+                    padding: 0.15rem 0.6rem;
                     border-radius: 12px;
-                    font-size: 0.85rem;
+                    font-size: 0.75rem;
                     font-weight: bold;
                     background: ${isFinalized ? 'rgba(0, 150, 255, 0.2)' : 'rgba(255, 193, 7, 0.2)'};
                     color: ${isFinalized ? '#0096ff' : '#ffc107'};
                     border: 1px solid ${isFinalized ? '#0096ff' : '#ffc107'};
-                    margin-left: 0.5rem;
                 ">
                     <i class="fas fa-${isFinalized ? 'lock' : 'clock'}"></i> ${finalizationText}
                 </span>
@@ -3234,14 +3487,14 @@ const SearchManager = {
                     <div style="display: grid; gap: 0.75rem;">
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
                             <strong>From:</strong>
-                            <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">
-                                ${Utils.formatHash(tx.tx.signer, 16)}
+                            <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline; font-family: monospace; word-break: break-all;">
+                                ${tx.tx.signer}
                             </span>
                         </div>
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
                             <strong>To:</strong>
-                            <span onclick="BlockExplorer.viewAddress('${recipient}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">
-                                ${Utils.formatHash(recipient, 16)}
+                            <span onclick="BlockExplorer.viewAddress('${recipient}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline; font-family: monospace; word-break: break-all;">
+                                ${recipient}
                             </span>
                         </div>
                         <div style="display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center;">
@@ -3308,34 +3561,80 @@ const SearchManager = {
             }
         }
 
+        // Section arguments : onglets Parsed / Raw quand du vecpak est décodé
+        let argsSection = '';
+        if (action.args && action.args.length > 0) {
+            const rawPanel = `
+                <div style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; font-family: monospace; font-size: 0.9em; overflow-x: auto;">
+                    <pre>${JSON.stringify(action.args, null, 2)}</pre>
+                </div>
+            `;
+            if (hasParsedArgs) {
+                const parsedPanel = action.args.map((arg, i) => `
+                    <div class="vp-arg">
+                        <div class="vp-arg-label">arg ${i}${parsedArgs[i] !== null ? ' <span class="vp-tag">vecpak</span>' : ''}</div>
+                        ${parsedArgs[i] !== null ? Vecpak.renderValue(parsedArgs[i]) : `<span class="vp-plain">${Vecpak.escapeHtml(arg)}</span>`}
+                    </div>
+                `).join('');
+                argsSection = `
+                    <div style="margin-top: 2rem;">
+                        <h3>Arguments</h3>
+                        <div class="args-tabs">
+                            <button class="args-tab active" onclick="SearchManager.showArgsTab('parsed', this)">Parsed Arguments</button>
+                            <button class="args-tab" onclick="SearchManager.showArgsTab('raw', this)">Raw Arguments</button>
+                        </div>
+                        <div id="argsPanelParsed" class="args-panel">${parsedPanel}</div>
+                        <div id="argsPanelRaw" class="args-panel" style="display: none;">${rawPanel}</div>
+                    </div>
+                `;
+            } else {
+                argsSection = `
+                    <div style="margin-top: 2rem;">
+                        <h3>Raw Arguments</h3>
+                        ${rawPanel}
+                    </div>
+                `;
+            }
+        }
+
+        const dateStr = tx.tx.nonce ? new Date(tx.tx.nonce / 1000000).toLocaleString() : '-';
+        const blockLink = tx.metadata
+            ? `<span onclick="SearchManager.goToBlockBySlot(${tx.metadata.entry_height})" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour voir les détails du bloc">${tx.metadata.entry_height}</span> <span style="color: #666;">·</span> `
+            : '';
+
         const html = `
             <h2>Transaction Details</h2>
+            <div class="tx-hash-line">
+                <span class="tx-hash" onclick="SearchManager.goToTransactionPage('${tx.hash}')" title="Cliquer pour aller à la page de la transaction">${tx.hash}</span>
+                ${statusBadge}${finalizationBadge}
+            </div>
             ${transferInfo}
+            ${contractMovedInfo}
             ${executionInfo}
-            <div style="margin: 2rem 0;">
-                <div style="display: grid; gap: 1rem;">
-                    <div><strong>Hash:</strong> <span onclick="SearchManager.goToTransactionPage('${tx.hash}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour aller à la page de la transaction">${tx.hash}</span></div>
-                    <div><strong>Status:</strong> ${statusBadge}${finalizationBadge}</div>
-                    ${!isTransfer ? `<div><strong>Signer:</strong> <span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${Utils.formatHash(tx.tx.signer, 16)}</span></div>` : ''}
-                    <div><strong>Timestamp:</strong> ${tx.tx.nonce ? new Date(tx.tx.nonce / 1000000).toLocaleString() : '-'}</div>
-                    <div><strong>Nonce:</strong> ${tx.tx.nonce}</div>
-                    <div><strong>Contract:</strong> ${action.contract}</div>
-                    <div><strong>Function:</strong> ${action.function}</div>
-                    ${tx.metadata ? `<div><strong>Block:</strong> <span onclick="SearchManager.goToBlockBySlot(${tx.metadata.entry_height})" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;" title="Cliquer pour voir les détails du bloc">${tx.metadata.entry_height}</span></div>` : ''}
-                </div>
+            <div class="tx-meta-grid">
+                <span class="tx-meta-label">Call</span>
+                <span class="tx-meta-value"><span class="tx-call-contract">${action.contract}</span><span class="tx-call-sep">.</span><span class="tx-call-function">${action.function}</span></span>
+                ${!isTransfer ? `
+                    <span class="tx-meta-label">Signer</span>
+                    <span class="tx-meta-value"><span onclick="BlockExplorer.viewAddress('${tx.tx.signer}')" style="cursor: pointer; color: rgb(24, 255, 178); text-decoration: underline;">${tx.tx.signer}</span></span>
+                ` : ''}
+                <span class="tx-meta-label">${tx.metadata ? 'Block' : 'Date'}</span>
+                <span class="tx-meta-value">${blockLink}${dateStr}</span>
+                <span class="tx-meta-label">Nonce</span>
+                <span class="tx-meta-value">${tx.tx.nonce}</span>
             </div>
 
-            ${action.args && action.args.length > 0 ? `
-                <div style="margin-top: 2rem;">
-                    <h3>Raw Arguments</h3>
-                    <div style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; font-family: monospace; font-size: 0.9em; overflow-x: auto;">
-                        <pre>${JSON.stringify(action.args, null, 2)}</pre>
-                    </div>
-                </div>
-            ` : ''}
+            ${argsSection}
         `;
         modalBody.innerHTML = html;
         document.getElementById('modal').style.display = 'block';
+    },
+
+    showArgsTab(which, btn) {
+        document.querySelectorAll('.args-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('argsPanelParsed').style.display = which === 'parsed' ? 'block' : 'none';
+        document.getElementById('argsPanelRaw').style.display = which === 'raw' ? 'block' : 'none';
     },
 
     showAddressModal(address, balances) {

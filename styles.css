@@ -184,7 +184,7 @@ body {
 /* Stats Grid */
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(12, 1fr);
     gap: 1.5rem;
     margin-bottom: 3rem;
     max-width: 1600px;
@@ -192,16 +192,25 @@ body {
     margin-right: auto;
 }
 
+/* Rangée 1 : height, epoch, circulating, burnt (4 cartes) — rangée 2 : pflops, participation, tx/s (3 cartes) */
+.stats-grid .stat-card {
+    grid-column: span 3;
+}
+
+.stats-grid .stat-card:nth-child(n+5) {
+    grid-column: span 4;
+}
+
 @media (max-width: 1400px) {
     .stats-grid {
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         max-width: 100%;
     }
 }
 
 @media (max-width: 900px) {
-    .stats-grid {
-        grid-template-columns: repeat(2, 1fr);
+    .stats-grid .stat-card,
+    .stats-grid .stat-card:nth-child(n+5) {
+        grid-column: span 6;
     }
 }
 
@@ -243,6 +252,289 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* Bouton d'aide (carte Participation) */
+.help-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-left: 0.25rem;
+    border: 1px solid rgba(24, 255, 178, 0.4);
+    border-radius: 50%;
+    background: transparent;
+    color: rgb(24, 255, 178);
+    font-size: 0.7rem;
+    line-height: 1;
+    cursor: pointer;
+    vertical-align: middle;
+    transition: all 0.3s ease;
+}
+
+.help-btn:hover {
+    background: rgba(24, 255, 178, 0.15);
+    border-color: rgb(24, 255, 178);
+}
+
+/* Modal Participation */
+.participation-help h2 {
+    color: rgb(24, 255, 178);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.participation-help .participation-value {
+    margin-left: auto;
+    margin-right: 1.5rem;
+    font-size: 1.2rem;
+    padding: 0.2rem 0.8rem;
+    border: 1px solid rgba(24, 255, 178, 0.4);
+    border-radius: 8px;
+    background: rgba(24, 255, 178, 0.1);
+}
+
+.participation-help p {
+    color: #b3b3b3;
+    line-height: 1.6;
+    margin-bottom: 1.5rem;
+}
+
+.participation-help p strong {
+    color: rgb(24, 255, 178);
+}
+
+.participation-highlights {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.highlight-box {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(0, 212, 255, 0.3);
+    border-radius: 12px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.highlight-box strong {
+    color: #00d4ff;
+}
+
+.highlight-box span {
+    color: #b3b3b3;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.highlight-green {
+    border-color: rgba(24, 255, 178, 0.3);
+}
+
+.highlight-green strong {
+    color: rgb(24, 255, 178);
+}
+
+.highlight-amber {
+    border-color: rgba(255, 193, 7, 0.3);
+}
+
+.highlight-amber strong {
+    color: rgb(255, 193, 7);
+}
+
+.participation-note {
+    font-size: 0.85rem;
+    opacity: 0.7;
+    margin-bottom: 0 !important;
+}
+
+.participation-help .burn-title,
+.participation-help .burn-accent {
+    color: rgb(255, 149, 0);
+}
+
+.participation-help .burn-value {
+    border-color: rgba(255, 149, 0, 0.4);
+    background: rgba(255, 149, 0, 0.1);
+    color: rgb(255, 149, 0);
+}
+
+/* Détails de transaction compacts */
+.tx-hash-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0.75rem 0 1.25rem 0;
+}
+
+.tx-hash-line .tx-hash {
+    margin: 0;
+    font-family: monospace;
+    font-size: 0.95rem;
+    color: rgb(24, 255, 178);
+    cursor: pointer;
+    text-decoration: underline;
+    word-break: break-all;
+}
+
+.tx-meta-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem 1.5rem;
+    align-items: baseline;
+    margin: 1.5rem 0;
+}
+
+.tx-meta-label {
+    color: #b3b3b3;
+    font-size: 0.9rem;
+}
+
+.tx-meta-value {
+    font-family: monospace;
+    font-size: 0.95rem;
+    word-break: break-all;
+}
+
+.tx-call-contract {
+    color: #00d4ff;
+    font-weight: bold;
+}
+
+.tx-call-sep {
+    color: #b3b3b3;
+    padding: 0 0.1rem;
+}
+
+.tx-call-function {
+    color: rgb(24, 255, 178);
+    font-weight: bold;
+}
+
+/* Onglets d'arguments de transaction (Parsed / Raw) */
+.args-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin: 1rem 0;
+}
+
+.args-tab {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #b3b3b3;
+    padding: 0.4rem 1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.3s ease;
+}
+
+.args-tab:hover {
+    border-color: rgba(24, 255, 178, 0.3);
+    color: #ffffff;
+}
+
+.args-tab.active {
+    background: rgba(24, 255, 178, 0.15);
+    border-color: rgb(24, 255, 178);
+    color: rgb(24, 255, 178);
+}
+
+.args-panel {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.vp-arg + .vp-arg {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.vp-arg-label {
+    color: #b3b3b3;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+.vp-tag {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border: 1px solid rgba(0, 212, 255, 0.4);
+    border-radius: 10px;
+    background: rgba(0, 212, 255, 0.1);
+    color: #00d4ff;
+    font-size: 0.75rem;
+    margin-left: 0.4rem;
+}
+
+.vp-struct {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.vp-row {
+    display: grid;
+    grid-template-columns: minmax(90px, auto) 1fr;
+    gap: 1rem;
+    align-items: baseline;
+}
+
+.vp-row .vp-struct {
+    border-left: 2px solid rgba(255, 255, 255, 0.1);
+    padding-left: 1rem;
+}
+
+.vp-key {
+    color: rgb(24, 255, 178);
+    font-family: monospace;
+    font-size: 0.9rem;
+}
+
+.vp-val {
+    font-family: monospace;
+    font-size: 0.9rem;
+    word-break: break-all;
+}
+
+.vp-int {
+    color: #e0e0e0;
+}
+
+.vp-ama {
+    color: rgb(24, 255, 178);
+    font-weight: bold;
+}
+
+.vp-str {
+    color: #ffc107;
+}
+
+.vp-bool,
+.vp-null {
+    color: #00d4ff;
+}
+
+.vp-addr {
+    color: rgb(24, 255, 178);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.vp-bytes,
+.vp-plain {
+    color: #b3b3b3;
 }
 
 /* Animation flip pour les chiffres */
@@ -570,8 +862,9 @@ body {
         grid-template-columns: 1fr;
     }
 
-    .stats-grid {
-        grid-template-columns: 1fr;
+    .stats-grid .stat-card,
+    .stats-grid .stat-card:nth-child(n+5) {
+        grid-column: span 12;
     }
 
     .page-header {
