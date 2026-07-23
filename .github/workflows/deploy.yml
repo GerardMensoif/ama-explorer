@@ -18,7 +18,7 @@ jobs:
 
       - name: Rsync
         run: |
-          rsync -avz --delete --dry-run \
+          rsync -avz --delete \
             -e "ssh -i ~/.ssh/id_ed25519" \
             --exclude='.git*' \
             --exclude='pflops_data.json' \
