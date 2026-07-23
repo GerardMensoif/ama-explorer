@@ -11,6 +11,8 @@ const WS_URL = 'wss://nodes.amadeus.bot/ws/rpc';
         try {
             const response = await fetch('/version.json?t=' + Date.now());
             const data = await response.json();
+            const el = document.getElementById('app-version');
+            if (el) el.textContent = data.version;
             const newVersion = data.timestamp.toString();
 
             if (!currentVersion) {
