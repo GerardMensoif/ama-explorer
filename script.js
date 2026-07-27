@@ -1986,6 +1986,18 @@ const PageManager = {
                     (entry.backingVaults = entry.backingVaults || []).push(v);
                     byAddress.set(v.validator, entry);
                 }
+                // Tout membre du set courant est inclus : sans stake de vault, il n'a pu
+                // y entrer qu'en minant des sols, donc il compte comme validateur "Sols"
+                // même si son compteur de sols est à 0 sur l'epoch en cours.
+                const statsValidators = statsData?.stats?.validators || {};
+                for (const [address, sv] of Object.entries(statsValidators)) {
+                    if (!sv.in_validator_set) continue;
+                    const entry = byAddress.get(address) || { address, sols: 0, stakedFlat: 0n, weightedBps: 0n, backingVaults: [] };
+                    entry.sols = entry.sols || Number(sv.sols || 0);
+                    entry.inValidatorSet = true;
+                    byAddress.set(address, entry);
+                }
+
                 // APY = moyenne pondérée par le stake des vaults adossés
                 for (const entry of byAddress.values()) {
                     entry.apyBps = entry.stakedFlat > 0n
@@ -1996,11 +2008,18 @@ const PageManager = {
                 // Être validateur par vault exige au moins 1M AMA de stake (VALIDATOR_MIN_STAKE)
                 const MIN_VAULT_STAKE_FLAT = 1000000000000000n; // 1M AMA
                 const merged = [...byAddress.values()]
-                    .filter(v => v.sols > 0 || v.stakedFlat >= MIN_VAULT_STAKE_FLAT)
-                    .map(v => ({ ...v, isVaultValidator: v.stakedFlat >= MIN_VAULT_STAKE_FLAT }));
+                    .filter(v => v.sols > 0 || v.inValidatorSet || v.stakedFlat >= MIN_VAULT_STAKE_FLAT)
+                    .map(v => ({
+                        ...v,
+                        isVaultValidator: v.stakedFlat >= MIN_VAULT_STAKE_FLAT,
+                        isSolsValidator: v.sols > 0 || (!!v.inValidatorSet && v.stakedFlat < MIN_VAULT_STAKE_FLAT),
+                    }));
 
-                // Sols décroissants, puis APY du vault adossé décroissant
-                merged.sort((a, b) => (b.sols - a.sols) || ((b.apyBps ?? -1) - (a.apyBps ?? -1)));
+                // Type Sols toujours en premier, puis sols décroissants, puis APY du vault adossé
+                merged.sort((a, b) =>
+                    (b.isSolsValidator - a.isSolsValidator) ||
+                    (b.sols - a.sols) ||
+                    ((b.apyBps ?? -1) - (a.apyBps ?? -1)));
 
                 // Conserver les entrées pour le détail APY (bouton "?")
                 AppState.validatorsByAddress = Object.fromEntries(merged.map(v => [v.address, v]));
@@ -2074,7 +2093,7 @@ const PageManager = {
                     ${validators.map((v, index) => {
                         const percentage = totalScore > 0 ? ((v.sols / totalScore) * 100).toFixed(2) : '0.00';
                         const badges = [
-                            v.sols > 0 ? '<span class="vtype-badge vtype-sols">Sols</span>' : '',
+                            v.isSolsValidator ? '<span class="vtype-badge vtype-sols">Sol</span>' : '',
                             v.isVaultValidator ? '<span class="vtype-badge vtype-vault">Vault</span>' : '',
                         ].join('');
                         return `
