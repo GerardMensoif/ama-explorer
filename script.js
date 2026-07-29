@@ -1963,15 +1963,38 @@ const PageManager = {
             const totalBurnedEl = document.getElementById('totalBurned');
 
             try {
+                // Stats d'abord : l'epoch courant détermine le préfixe des sets de validateurs
+                const statsData = await API.getStats();
+                if (statsData.stats) AppState.stats = statsData.stats;
+                const burned = statsData?.stats?.burned || 0;
+                const epoch = Math.floor((statsData?.stats?.height || 0) / 100000);
+
+                // Sets de validateurs écrits pendant l'epoch courant (rollover + slashs) :
+                // préfixe = 7 premiers chiffres de la hauteur paddée sur 12 → toutes les
+                // écritures bic:epoch:validators:height: de l'epoch
+                const trainersPrefix = 'bic:epoch:validators:height:' + String(epoch * 100000).padStart(12, '0').slice(0, 7);
+
                 // Validateurs par sols (score d'epoch) + vaults (stake délégué)
-                const [validators, vaults] = await Promise.all([
+                const [validators, vaults, trainersBin] = await Promise.all([
                     API.getValidators(),
                     this.fetchVaults(),
+                    API.getContractPrefix(trainersPrefix).catch(() => new Uint8Array(0)),
                 ]);
 
-                // Get chain stats for burned value
-                const statsData = await API.getStats();
-                const burned = statsData?.stats?.burned || 0;
+                // Slashés = présents dans le set au début de l'epoch mais plus dans le set courant
+                // (même diff que kv_get_trainers_removed côté node)
+                let removedValidators = [];
+                try {
+                    const sets = Vecpak.decodePrefixListing(trainersBin)
+                        .map(({ key, value }) => ({ h: new TextDecoder().decode(key), set: Vecpak.decodeTerm(value, { o: 0 }) }))
+                        .sort((a, b) => (a.h < b.h ? -1 : 1));
+                    if (sets.length > 1) {
+                        const current = new Set(sets[sets.length - 1].set.map(pk => Vecpak.base58Encode(pk)));
+                        removedValidators = sets[0].set.map(pk => Vecpak.base58Encode(pk)).filter(pk => !current.has(pk));
+                    }
+                } catch (e) {
+                    console.error('Slashed validators detection failed:', e);
+                }
 
                 // Fusion : un validateur peut être actif par sols, par vault, ou les deux
                 const byAddress = new Map();
@@ -1998,6 +2021,13 @@ const PageManager = {
                     byAddress.set(address, entry);
                 }
 
+                // Les validateurs slashés restent affichés, marqués comme tels
+                for (const address of removedValidators) {
+                    const entry = byAddress.get(address) || { address, sols: 0, stakedFlat: 0n, weightedBps: 0n, backingVaults: [] };
+                    entry.isSlashed = true;
+                    byAddress.set(address, entry);
+                }
+
                 // APY = moyenne pondérée par le stake des vaults adossés
                 for (const entry of byAddress.values()) {
                     entry.apyBps = entry.stakedFlat > 0n
@@ -2008,14 +2038,17 @@ const PageManager = {
                 // Être validateur par vault exige au moins 1M AMA de stake (VALIDATOR_MIN_STAKE)
                 const MIN_VAULT_STAKE_FLAT = 1000000000000000n; // 1M AMA
                 const merged = [...byAddress.values()]
-                    .filter(v => v.sols > 0 || v.inValidatorSet || v.stakedFlat >= MIN_VAULT_STAKE_FLAT)
+                    .filter(v => v.sols > 0 || v.inValidatorSet || v.isSlashed || v.stakedFlat >= MIN_VAULT_STAKE_FLAT)
                     .map(v => ({
                         ...v,
+                        // un slashé garde son type d'origine : membre du set (au début de
+                        // l'epoch pour un slashé) sans stake suffisant => Sol
                         isVaultValidator: v.stakedFlat >= MIN_VAULT_STAKE_FLAT,
-                        isSolsValidator: v.sols > 0 || (!!v.inValidatorSet && v.stakedFlat < MIN_VAULT_STAKE_FLAT),
+                        isSolsValidator: v.sols > 0 || ((!!v.inValidatorSet || !!v.isSlashed) && v.stakedFlat < MIN_VAULT_STAKE_FLAT),
                     }));
 
-                // Type Sols toujours en premier, puis sols décroissants, puis APY du vault adossé
+                // Type Sol toujours en premier, puis sols décroissants, puis APY du vault
+                // adossé — les slashés se classent normalement, seul leur badge les signale
                 merged.sort((a, b) =>
                     (b.isSolsValidator - a.isSolsValidator) ||
                     (b.sols - a.sols) ||
@@ -2095,6 +2128,7 @@ const PageManager = {
                         const badges = [
                             v.isSolsValidator ? '<span class="vtype-badge vtype-sols">Sol</span>' : '',
                             v.isVaultValidator ? '<span class="vtype-badge vtype-vault">Vault</span>' : '',
+                            v.isSlashed ? '<span class="vtype-badge vtype-slashed" title="Removed from the validator set this epoch">Slashed</span>' : '',
                         ].join('');
                         return `
                             <tr>
