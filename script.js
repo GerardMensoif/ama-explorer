@@ -1,6 +1,12 @@
 // Configuration de l'API
-const API_BASE = 'https://nodes.amadeus.bot';
-const WS_URL = 'wss://nodes.amadeus.bot/ws/rpc';
+// Mainnet par défaut ; ajouter ?network=testnet à l'URL pour basculer sur le testnet
+const NETWORKS = {
+    mainnet: { api: 'https://mainnet-rpc.ama.one', ws: 'wss://mainnet-rpc.ama.one/ws/rpc' },
+    testnet: { api: 'https://testnet-rpc.ama.one', ws: 'wss://testnet-rpc.ama.one/ws/rpc' },
+};
+const NETWORK = new URLSearchParams(window.location.search).get('network') === 'testnet' ? 'testnet' : 'mainnet';
+const API_BASE = NETWORKS[NETWORK].api;
+const WS_URL = NETWORKS[NETWORK].ws;
 
 // Auto-update system - checks for new version every 3 minutes
 (function() {
@@ -969,7 +975,8 @@ const PageManager = {
                 break;
         }
 
-        history.pushState({ page: pageName, params }, '', url);
+        // Conserver la query string (ex. ?network=testnet) lors de la navigation
+        history.pushState({ page: pageName, params }, '', url + window.location.search);
     },
 
     parseUrl() {

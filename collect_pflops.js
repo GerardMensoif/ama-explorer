@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Configuration
-const API_URL = 'https://nodes.amadeus.bot/api/chain/stats';
+const API_URL = 'https://mainnet-rpc.ama.one/api/chain/stats';
 const DATA_FILE = path.join(__dirname, 'pflops_data.json');
 
 // Fonction pour faire une requête HTTPS
