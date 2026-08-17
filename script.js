@@ -2800,33 +2800,8 @@ const PageManager = {
         this.initAddressPageEvents(address);
 
         try {
-            // Charger les balances
-            let balances = [];
-            try {
-                const balanceData = await API.getAllBalances(address);
-                balances = balanceData.balances || [];
-
-                // Fallback: if balance_all returns empty, try balance for AMA
-                if (balances.length === 0) {
-                    const amaBalance = await API.getBalance(address, 'AMA');
-                    if (amaBalance && amaBalance.balance) {
-                        balances = [amaBalance.balance];
-                    }
-                }
-            } catch (balanceError) {
-                console.warn('balance_all failed, trying balance for AMA:', balanceError);
-                // Fallback to single balance API
-                try {
-                    const amaBalance = await API.getBalance(address, 'AMA');
-                    if (amaBalance && amaBalance.balance) {
-                        balances = [amaBalance.balance];
-                    }
-                } catch (fallbackError) {
-                    console.error('All balance APIs failed:', fallbackError);
-                }
-            }
-
-            this.renderAddressBalances(balances);
+            // Charger les balances (tous les symboles, zéro inclus)
+            this.renderAddressBalances(await this.fetchAddressBalances(address));
 
             // Charger les transactions
             await this.loadAddressTransactions(address, 'all', 50);
@@ -2853,32 +2828,8 @@ const PageManager = {
                 const typeFilter = document.getElementById('txTypeFilter');
                 const limitFilter = document.getElementById('txLimitFilter');
 
-                // Reload balances with fallback
-                let balances = [];
-                try {
-                    const balanceData = await API.getAllBalances(address);
-                    balances = balanceData.balances || [];
-
-                    // Fallback: if balance_all returns empty, try balance for AMA
-                    if (balances.length === 0) {
-                        const amaBalance = await API.getBalance(address, 'AMA');
-                        if (amaBalance && amaBalance.balance) {
-                            balances = [amaBalance.balance];
-                        }
-                    }
-                } catch (balanceError) {
-                    console.warn('balance_all failed, trying balance for AMA:', balanceError);
-                    try {
-                        const amaBalance = await API.getBalance(address, 'AMA');
-                        if (amaBalance && amaBalance.balance) {
-                            balances = [amaBalance.balance];
-                        }
-                    } catch (fallbackError) {
-                        console.error('All balance APIs failed:', fallbackError);
-                    }
-                }
-
-                this.renderAddressBalances(balances);
+                // Recharger les balances (tous les symboles, zéro inclus)
+                this.renderAddressBalances(await this.fetchAddressBalances(address));
 
                 // Reload transactions
                 await this.loadAddressTransactions(address, typeFilter.value, parseInt(limitFilter.value));
@@ -2906,6 +2857,38 @@ const PageManager = {
         document.getElementById('loadMoreTxBtn').onclick = () => {
             this.loadMoreTransactions(address);
         };
+    },
+
+    // AMA d'abord, PRIME ensuite, le reste par ordre alphabétique tant qu'aucune
+    // priorité n'est assignée
+    SYMBOL_PRIORITY: { AMA: 0, PRIME: 1 },
+
+    async fetchAddressBalances(address) {
+        let balances = [];
+        try {
+            const balanceData = await API.getAllBalances(address);
+            balances = balanceData.balances || [];
+        } catch (balanceError) {
+            console.warn('balance_all failed, trying balance for AMA:', balanceError);
+            try {
+                const amaBalance = await API.getBalance(address, 'AMA');
+                if (amaBalance && amaBalance.balance) {
+                    balances = [amaBalance.balance];
+                }
+            } catch (fallbackError) {
+                console.error('All balance APIs failed:', fallbackError);
+            }
+        }
+
+        // Les soldes à zéro sont masqués ; AMA (coin natif) reste toujours affiché
+        balances = balances.filter(b => b.symbol === 'AMA' || (b.flat || b.float) > 0);
+        if (!balances.some(b => b.symbol === 'AMA')) {
+            balances.push({ symbol: 'AMA', flat: 0, float: 0 });
+        }
+
+        const prio = s => this.SYMBOL_PRIORITY[s] ?? 100;
+        balances.sort((a, b) => (prio(a.symbol) - prio(b.symbol)) || a.symbol.localeCompare(b.symbol));
+        return balances;
     },
 
     renderAddressBalances(balances) {
