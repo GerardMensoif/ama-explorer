@@ -1,10 +1,14 @@
 // Configuration de l'API
-// Mainnet par défaut ; ajouter ?network=testnet à l'URL pour basculer sur le testnet
+// Réseau choisi selon le domaine (testnet-* => testnet) ; ?network=mainnet|testnet force le choix
 const NETWORKS = {
     mainnet: { api: 'https://mainnet-rpc.ama.one', ws: 'wss://mainnet-rpc.ama.one/ws/rpc' },
     testnet: { api: 'https://testnet-rpc.ama.one', ws: 'wss://testnet-rpc.ama.one/ws/rpc' },
 };
-const NETWORK = new URLSearchParams(window.location.search).get('network') === 'testnet' ? 'testnet' : 'mainnet';
+const NETWORK = (() => {
+    const param = new URLSearchParams(window.location.search).get('network');
+    if (param === 'testnet' || param === 'mainnet') return param;
+    return window.location.hostname.startsWith('testnet') ? 'testnet' : 'mainnet';
+})();
 const API_BASE = NETWORKS[NETWORK].api;
 const WS_URL = NETWORKS[NETWORK].ws;
 
