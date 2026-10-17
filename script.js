@@ -5,12 +5,23 @@ const NETWORKS = {
     testnet: { api: 'https://testnet-rpc.ama.one', ws: 'wss://testnet-rpc.ama.one/ws/rpc' },
 };
 const NETWORK = (() => {
-    const param = new URLSearchParams(window.location.search).get('network');
+    const query = new URLSearchParams(window.location.search);
+    if (query.has('testnet')) return 'testnet';
+    const param = query.get('network');
     if (param === 'testnet' || param === 'mainnet') return param;
     return window.location.hostname.startsWith('testnet') ? 'testnet' : 'mainnet';
 })();
 const API_BASE = NETWORKS[NETWORK].api;
 const WS_URL = NETWORKS[NETWORK].ws;
+
+// Titre de la page selon le réseau
+if (NETWORK === 'testnet') {
+    document.title = 'Amadeus Testnet Blockchain Explorer';
+    document.addEventListener('DOMContentLoaded', () => {
+        const h1 = document.querySelector('.hero-section h1');
+        if (h1) h1.textContent = 'Amadeus Testnet Blockchain Explorer';
+    });
+}
 
 // Auto-update system - checks for new version every 3 minutes
 (function() {
