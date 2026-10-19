@@ -533,6 +533,27 @@ const Vecpak = {
         }
         if (t !== 0x07) throw new Error('Unexpected prefix listing type ' + t);
         const n = Number(this.decodeVarint(data, ref));
+        // Nouveau format paginé : {rows: {clé -> blob}, cursor: nil | <clé suivante>}
+        if (data[ref.o] === 0x05 && n <= 2) {
+            const save = ref.o;
+            const td = new TextDecoder();
+            const fields = {};
+            try {
+                for (let i = 0; i < n; i++) {
+                    const k = td.decode(this.readBytesTerm(data, ref));
+                    const start = ref.o;
+                    this.decodeTerm(data, ref);
+                    fields[k] = data.subarray(start, ref.o);
+                }
+            } catch (e) { /* pas le format paginé */ }
+            if (fields.rows && ref.o === data.length) {
+                if (fields.cursor && fields.cursor[0] !== 0x00) {
+                    console.warn('get_prefix: résultat paginé, entrées suivantes ignorées');
+                }
+                return this.decodePrefixListing(fields.rows);
+            }
+            ref.o = save;
+        }
         const out = [];
         for (let i = 0; i < n; i++) {
             const key = this.readBytesTerm(data, ref);
